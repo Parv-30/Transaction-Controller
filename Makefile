@@ -1,5 +1,5 @@
 # Makefile
-.PHONY: chaos-test chaos-test-01 chaos-test-02 chaos-test-03 up down smoke-test
+.PHONY: chaos-test chaos-test-01 chaos-test-02 chaos-test-03 chaos-test-04 chaos-test-05 up down smoke-test
 
 up:
 	docker compose up -d --build
@@ -19,5 +19,11 @@ chaos-test-02:
 chaos-test-03:
 	bash chaos/scenarios/03_processor_crash_mid_consume.sh
 
-chaos-test: chaos-test-01 chaos-test-02 chaos-test-03
+chaos-test-04:
+	bash chaos/scenarios/04_duplicate_delivery.sh
+
+chaos-test-05:
+	bash chaos/scenarios/05_partition_during_lock.sh
+
+chaos-test: chaos-test-01 chaos-test-02 chaos-test-03 chaos-test-04 chaos-test-05
 	@echo "All chaos scenarios passed."
