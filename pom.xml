@@ -40,4 +40,37 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <!--
+        This reactor imports spring-boot-dependencies as a BOM (for dependency versions) but
+        does NOT inherit from spring-boot-starter-parent as its Maven <parent>, because both
+        modules already have this reactor pom as their <parent> for shared groupId/version.
+        spring-boot-starter-parent is normally what supplies pluginManagement binding
+        spring-boot-maven-plugin's "repackage" goal to the package phase with a resolved
+        version. Without that, spring-boot-maven-plugin declared bare (no version, no
+        executions) in each module's pom resolves via Maven's super-POM default plugin
+        version resolution but never actually runs repackage, silently producing a plain
+        (non-executable, "no main manifest attribute") jar instead of the Spring Boot fat
+        jar. Confirmed by reproduction: ledger-service's Docker image failed to start with
+        exactly that error. This pluginManagement block restores the correct binding for
+        every module in the reactor.
+    -->
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>repackage</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 </project>

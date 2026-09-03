@@ -1,0 +1,110 @@
+services:
+  ledger-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ledger_db
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4", "-c", "max_wal_senders=4"]
+    volumes:
+      - ledger-pgdata:/var/lib/postgresql/data
+      - ./ledger-postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d ledger_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  processor-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: processor_db
+      POSTGRES_USER: processor
+      POSTGRES_PASSWORD: processor
+    volumes:
+      - processor-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U processor -d processor_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    ports:
+      - "8474:8474"   # control API
+      - "15432:15432" # ledger-postgres app connection proxy
+      - "15433:15433" # ledger-postgres CDC connection proxy
+      - "15674:15674" # rabbitmq proxy (distinct host port -- rabbitmq itself already binds 5672/15672)
+    depends_on:
+      ledger-postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  ledger-service:
+    build:
+      context: .
+      dockerfile: ledger-service/Dockerfile
+    environment:
+      DB_HOST: toxiproxy
+      DB_PORT: "15432"
+      DB_NAME: ledger_db
+      DB_USER: ledger
+      DB_PASSWORD: ledger
+      PROCESSOR_BASE_URL: http://transaction-processor:8081
+    ports:
+      - "8080:8080"
+    depends_on:
+      ledger-postgres:
+        condition: service_healthy
+      toxiproxy:
+        condition: service_started
+
+  transaction-processor:
+    build:
+      context: .
+      dockerfile: transaction-processor/Dockerfile
+    environment:
+      DB_HOST: processor-postgres
+      DB_PORT: "5432"
+      DB_NAME: processor_db
+      DB_USER: processor
+      DB_PASSWORD: processor
+      RABBITMQ_HOST: toxiproxy
+      RABBITMQ_PORT: "15674"
+      CDC_DB_HOST: toxiproxy
+      CDC_DB_PORT: "15433"
+      CDC_DB_USER: debezium_replicator
+      CDC_DB_PASSWORD: debezium_replicator
+      CDC_DB_NAME: ledger_db
+      CDC_OFFSET_FILE: /var/lib/debezium/offsets/offsets.dat
+    volumes:
+      - debezium-offsets:/var/lib/debezium/offsets
+    ports:
+      - "8081:8081"
+    depends_on:
+      processor-postgres:
+        condition: service_healthy
+      ledger-service:
+        condition: service_started
+      toxiproxy:
+        condition: service_started
+
+volumes:
+  ledger-pgdata:
+  processor-pgdata:
+  debezium-offsets:
