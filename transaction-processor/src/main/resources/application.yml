@@ -21,6 +21,10 @@ spring:
     password: ${RABBITMQ_PASSWORD:guest}
     requested-heartbeat: ${RABBITMQ_HEARTBEAT_SECONDS:10}
 
+publish:
+  retry:
+    interval-ms: ${PUBLISH_RETRY_INTERVAL_MS:30000}
+
 cdc:
   engine:
     auto-startup: ${CDC_ENGINE_AUTO_STARTUP:true}

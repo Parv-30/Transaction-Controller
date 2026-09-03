@@ -70,26 +70,4 @@ public class ProcessedEvent {
     public int getDeliveryCount() { return deliveryCount; }
     public String getPayload() { return payload; }
     public Instant getUpdatedAt() { return updatedAt; }
-
-    public void markPublished() {
-        this.status = ProcessedEventStatus.PUBLISHED;
-        this.publishedAt = Instant.now();
-        this.updatedAt = Instant.now();
-    }
-
-    public void markPublishFailed() {
-        this.status = ProcessedEventStatus.PUBLISH_FAILED;
-        this.updatedAt = Instant.now();
-    }
-
-    public void markConsumed() {
-        this.status = ProcessedEventStatus.CONSUMED;
-        this.consumedAt = Instant.now();
-        this.updatedAt = Instant.now();
-    }
-
-    public void recordDuplicateDelivery() {
-        this.deliveryCount += 1;
-        this.updatedAt = Instant.now();
-    }
 }
