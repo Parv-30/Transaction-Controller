@@ -14,3 +14,8 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+
+processor:
+  base-url: ${PROCESSOR_BASE_URL:http://localhost:8081}
+reconciliation:
+  interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
