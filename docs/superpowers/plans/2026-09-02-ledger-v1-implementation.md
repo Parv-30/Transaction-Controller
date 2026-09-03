@@ -3827,8 +3827,7 @@ services:
       - "8474:8474"   # control API
       - "15432:15432" # ledger-postgres app connection proxy
       - "15433:15433" # ledger-postgres CDC connection proxy
-      - "15672:5672"  # NOTE: intentionally left OUT — rabbitmq already binds 5672/15672 on the host;
-                       # the RabbitMQ proxy below uses a distinct host port instead.
+      - "15674:15674" # rabbitmq proxy (distinct host port — rabbitmq itself already binds 5672/15672)
     depends_on:
       ledger-postgres:
         condition: service_healthy
@@ -3889,28 +3888,6 @@ volumes:
   processor-pgdata:
   debezium-offsets:
 ```
-
-Correction to the `toxiproxy` service's `ports` block above: remove the invalid/commented
-`15672:5672` line entirely (it was left in only to explain the port choice — delete it when
-writing the actual file) and instead expose a RabbitMQ proxy port explicitly:
-
-```yaml
-  toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.9.0
-    ports:
-      - "8474:8474"
-      - "15432:15432"
-      - "15433:15433"
-      - "15674:15674"
-    depends_on:
-      ledger-postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-```
-
-(This replaces the `ports` and `depends_on` block from the first `toxiproxy` snippet above —
-use only this corrected version in the final file.)
 
 - [ ] **Step 5: Write a script that configures the Toxiproxy proxies on startup**
 
