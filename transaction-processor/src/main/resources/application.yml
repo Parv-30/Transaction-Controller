@@ -4,3 +4,13 @@ server:
 spring:
   application:
     name: transaction-processor
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:processor_db}
+    username: ${DB_USER:processor}
+    password: ${DB_PASSWORD:processor}
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
