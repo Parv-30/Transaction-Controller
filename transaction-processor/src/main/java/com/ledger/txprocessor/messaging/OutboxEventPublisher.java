@@ -1,27 +1,44 @@
 package com.ledger.txprocessor.messaging;
 
-import com.ledger.txprocessor.repository.ProcessedEventRepository;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageBuilder;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.UUID;
 
+/**
+ * Publishes transaction-posted events to RabbitMQ with publisher confirms.
+ *
+ * <p>Confirm-callback design note: the actual publish-confirm bookkeeping lives in
+ * {@link OutboxConfirmHandler#onConfirm} — a separate, genuinely-injected {@code @Service}
+ * bean — not in a method on this class. Earlier, this constructor registered
+ * {@code this::onConfirm} against a package-private {@code @Transactional} method declared
+ * right here on {@code OutboxEventPublisher}. That is a classic Spring AOP self-invocation
+ * bug: {@code this::onConfirm} captures a direct method reference on the actual object
+ * instance, never passing through the CGLIB/JDK dynamic proxy that Spring's transaction
+ * interceptor relies on. When the RabbitMQ client library's confirm-listener thread later
+ * invoked that callback, it called straight into the raw instance, {@code @Transactional} was
+ * silently ignored, and every {@code @Modifying} repository call inside the handler threw
+ * {@code jakarta.persistence.TransactionRequiredException} — confirmed by a Docker Compose
+ * smoke test, where the publisher's own PUBLISHED/PUBLISH_FAILED bookkeeping was found to
+ * fail on every single confirm. Registering {@code outboxConfirmHandler::onConfirm} instead
+ * (a method reference to a distinct bean, injected through the constructor like everywhere
+ * else in this codebase) resolves through the real Spring-managed proxy, so the
+ * {@code @Transactional} on {@link OutboxConfirmHandler#onConfirm} actually takes effect. This
+ * mirrors the {@link OutboxEventConsumer} / {@link DedupGateService} split used for the same
+ * class of problem on the consume side of this exact publisher/consumer pair.
+ */
 @Component
 public class OutboxEventPublisher {
 
     private final RabbitTemplate rabbitTemplate;
-    private final ProcessedEventRepository processedEventRepository;
 
-    public OutboxEventPublisher(RabbitTemplate rabbitTemplate, ProcessedEventRepository processedEventRepository) {
+    public OutboxEventPublisher(RabbitTemplate rabbitTemplate, OutboxConfirmHandler outboxConfirmHandler) {
         this.rabbitTemplate = rabbitTemplate;
-        this.processedEventRepository = processedEventRepository;
-        this.rabbitTemplate.setConfirmCallback(this::onConfirm);
+        this.rabbitTemplate.setConfirmCallback(outboxConfirmHandler::onConfirm);
     }
 
     public void publish(UUID outboxEventId, UUID aggregateId, String eventType, String payload) {
@@ -35,37 +52,5 @@ public class OutboxEventPublisher {
         CorrelationData correlationData = new CorrelationData(outboxEventId.toString());
         rabbitTemplate.convertAndSend(MessagingConstants.LEDGER_EXCHANGE,
                 MessagingConstants.TRANSACTION_POSTED_ROUTING_KEY, message, correlationData);
-    }
-
-    /**
-     * Publisher-confirm callback. This is invoked exactly once per {@link #publish} call
-     * (the broker acks or nacks a given correlated publish exactly once), so there is no
-     * concurrent race between two confirm callbacks for the same outboxEventId. However,
-     * there IS a race against {@link OutboxEventConsumer} / {@link DedupGateService}: the
-     * broker can (and observably does, even for a same-process publish/consume round trip
-     * over a local connection) route the message to the consumer and fire this confirm
-     * callback close enough together that a naive read-then-write here — reading the row
-     * before the consumer's atomic dedup-gate UPDATE commits, then blindly saving every
-     * column back — would silently overwrite an already-committed {@code CONSUMED} status
-     * back to {@code PUBLISHED} (a lost update, confirmed by reproducing it under Hibernate
-     * SQL logging: the confirm thread's full-entity UPDATE landed after the consumer
-     * thread's conditional UPDATE and clobbered it). So this uses the same narrowly-scoped,
-     * conditional-UPDATE pattern as the dedup gate
-     * ({@link ProcessedEventRepository#markPublishedIfNotConsumed} /
-     * {@link ProcessedEventRepository#markPublishFailedIfNotConsumed}): it touches only the
-     * publish-ack columns and is a no-op if the row is already CONSUMED.
-     */
-    @Transactional
-    void onConfirm(CorrelationData correlationData, boolean ack, String cause) {
-        if (correlationData == null) {
-            return;
-        }
-        UUID outboxEventId = UUID.fromString(correlationData.getId());
-        Instant now = Instant.now();
-        if (ack) {
-            processedEventRepository.markPublishedIfNotConsumed(outboxEventId, now);
-        } else {
-            processedEventRepository.markPublishFailedIfNotConsumed(outboxEventId, now);
-        }
     }
 }
