@@ -44,6 +44,15 @@ class ReconciliationChecks {
     /** How old an outbox row must be before it is even considered for the stuck check. */
     private static final Duration STUCK_THRESHOLD = Duration.ofMinutes(2);
 
+    /**
+     * Caps how many stale outbox rows a single reconciliation run will pull back. Without a
+     * bound, every row older than {@link #STUCK_THRESHOLD} is selected on every scheduled run,
+     * which is unbounded work under sustained backlog. 500 is a reasonable single-query cap for
+     * V1 -- not true pagination, just enough to keep one run's query and result set bounded; a
+     * backlog larger than this is picked up incrementally across subsequent runs.
+     */
+    private static final int STALE_OUTBOX_ROW_LIMIT = 500;
+
     private final JdbcTemplate jdbcTemplate;
 
     ReconciliationChecks(JdbcTemplate jdbcTemplate) {
@@ -89,7 +98,8 @@ class ReconciliationChecks {
                 SELECT id, aggregate_id FROM outbox
                 WHERE created_at < now() - (? || ' seconds')::interval
                 ORDER BY created_at
-                """, STUCK_THRESHOLD.toSeconds());
+                LIMIT ?
+                """, STUCK_THRESHOLD.toSeconds(), STALE_OUTBOX_ROW_LIMIT);
         return rows.stream()
                 .map(row -> new StaleOutboxRow((UUID) row.get("id"), (UUID) row.get("aggregate_id")))
                 .toList();
