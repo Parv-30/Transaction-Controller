@@ -4,11 +4,11 @@
 # seeding, transaction posting, and polling helpers against the running compose stack.
 #
 # Note: this deliberately does NOT create the Toxiproxy proxies themselves (that's
-# scripts/smoke-test.sh's job, run once against a freshly-up stack, per the Task 9
-# lessons -- CDC provisioning, including the ledger_outbox_pub publication and the
-# debezium_replicator GRANT, is also only done there). Scenarios assume the stack is
-# already up and smoke-tested/provisioned; they only add/remove toxics on the
-# already-existing proxies and reset them to a clean slate at the start of each run.
+# scripts/provision.sh's job -- run automatically by `make up`, or once by hand against a
+# freshly-up stack -- per the Task 9 lessons; CDC provisioning, including the
+# ledger_outbox_pub publication and the debezium_replicator GRANT, is also only done there).
+# Scenarios assume the stack is already up and provisioned; they only add/remove toxics on
+# the already-existing proxies and reset them to a clean slate at the start of each run.
 
 TOXIPROXY_API="${TOXIPROXY_API:-http://localhost:8474}"
 LEDGER_URL="${LEDGER_URL:-http://localhost:8080}"

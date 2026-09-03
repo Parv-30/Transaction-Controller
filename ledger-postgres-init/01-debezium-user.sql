@@ -10,7 +10,7 @@
 -- CREATE PUBLICATION Debezium needs (publication.autocreate.mode=disabled -- see
 -- DebeziumEngineLifecycle) both depend on "outbox" existing and are run later, once
 -- ledger-service is confirmed healthy (and therefore has migrated), by
--- scripts/smoke-test.sh's "Granting CDC privileges..." step. A first attempt at doing all of
+-- scripts/provision.sh's "Granting CDC privileges..." step. A first attempt at doing all of
 -- this in one initdb.d script was tried and reproducibly failed: Postgres init scripts run
 -- so early that "outbox" reliably does not exist yet, and the resulting error
 -- ("relation \"public.outbox\" does not exist") crashes the entire ledger-postgres container

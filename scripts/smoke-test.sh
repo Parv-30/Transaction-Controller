@@ -1,104 +1,20 @@
 #!/usr/bin/env bash
 # D:\Ledger\scripts\smoke-test.sh
 #
-# End-to-end smoke test for the full V1 Docker Compose stack: posts a real transaction
-# through ledger-service, waits for the Transaction Processor's embedded Debezium CDC engine
-# to capture the resulting outbox row, publish it to RabbitMQ, and consume it, then triggers
-# a reconciliation run and expects a clean result.
+# End-to-end verification for the V1 Docker Compose stack: posts a real transaction through
+# ledger-service, waits for the Transaction Processor's embedded Debezium CDC engine to
+# capture the resulting outbox row, publish it to RabbitMQ, and consume it, then triggers a
+# reconciliation run and expects a clean result.
 #
-# Replication-slot-timing note (see Task 7 / Task 9 brief): DebeziumEngineLifecycle.start()
-# returns before the Postgres replication slot is actually confirmed to exist -- slot
-# creation happens on a background thread, roughly 700-800ms later. If this script posted the
-# transaction immediately after ledger-service's /actuator/health reported healthy, there
-# would be a real, observed-in-practice race: a transaction committed before the slot exists
-# is invisible to logical replication forever (Postgres does not retroactively capture
-# pre-slot changes -- this is not a bug, it's how logical replication slots work). Rather than
-# either (a) blindly sleeping a fixed, guessed duration before posting, or (b) blindly
-# sleeping a fixed duration after posting and hoping it was enough, this script does two
-# things:
-#   1. Waits for ledger-service health AND gives the stack a fixed grace period before
-#      posting, long enough to comfortably clear the ~700-800ms slot-creation window many
-#      times over (the CDC engine starts during transaction-processor's own boot, well before
-#      this script even begins polling ledger-service's health endpoint in practice, but the
-#      grace period is kept as defense-in-depth documentation of the known race).
-#   2. Critically, replaces the brief's single blind `sleep 30` + one-shot check with a
-#      polling loop that repeatedly triggers reconciliation and inspects the actual outcome
-#      (outboxMissingCount / outboxStuckCount) up to a bounded timeout, so the test verifies
-#      the real success condition instead of assuming a fixed sleep was "long enough". This
-#      also makes the script fail fast when the pipeline is broken instead of always waiting
-#      the full timeout.
+# This script assumes infrastructure provisioning has already happened -- Toxiproxy proxy
+# creation, the CDC grant/publication, and the service restarts that depend on them. That is
+# scripts/provision.sh's job, not this script's: `make up` runs `docker compose up -d --build`
+# followed by `provision.sh` automatically, so by the time this script runs against a stack
+# brought up via `make up`, provisioning is already done. If you brought the stack up some
+# other way (e.g. `docker compose up -d --build` directly), run `bash scripts/provision.sh`
+# once before this script -- otherwise the CDC pipeline has never been wired up and this
+# script's reconciliation-polling loop will simply time out.
 set -euo pipefail
-
-TOXIPROXY_API="http://localhost:8474"
-
-echo "Configuring Toxiproxy proxies..."
-curl -sf -X POST "$TOXIPROXY_API/proxies" -d '{
-  "name": "ledger-postgres-app-proxy",
-  "listen": "0.0.0.0:15432",
-  "upstream": "ledger-postgres:5432"
-}' > /dev/null || echo "  (ledger-postgres-app-proxy already exists)"
-
-curl -sf -X POST "$TOXIPROXY_API/proxies" -d '{
-  "name": "ledger-postgres-cdc-proxy",
-  "listen": "0.0.0.0:15433",
-  "upstream": "ledger-postgres:5432"
-}' > /dev/null || echo "  (ledger-postgres-cdc-proxy already exists)"
-
-curl -sf -X POST "$TOXIPROXY_API/proxies" -d '{
-  "name": "rabbitmq-proxy",
-  "listen": "0.0.0.0:15674",
-  "upstream": "rabbitmq:5672"
-}' > /dev/null || echo "  (rabbitmq-proxy already exists)"
-
-echo "Restarting ledger-service so its datasource connects through the now-configured"
-echo "toxiproxy proxy (on first \"docker compose up\", ledger-service starts before this"
-echo "script has had a chance to create the proxies above, so its initial connection attempt"
-echo "to toxiproxy:15432 is refused and the container exits -- confirmed by reproduction)..."
-docker compose restart ledger-service > /dev/null
-
-echo "Waiting for ledger-service to be healthy..."
-for i in $(seq 1 30); do
-  if curl -sf http://localhost:8080/actuator/health > /dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-
-echo "Granting CDC privileges on outbox and creating the Debezium publication..."
-# ledger-postgres-init/01-debezium-user.sql deliberately only creates the debezium_replicator
-# role: Postgres initdb.d scripts run before ledger-service has ever connected and run its
-# Flyway migration, so the "outbox" table does not exist yet at that point -- a GRANT or
-# CREATE PUBLICATION referencing it there fails and crashes the whole ledger-postgres
-# container (confirmed by reproduction). By this point in the script, ledger-service has
-# reported healthy above, so Flyway has run and "outbox" exists. This step is idempotent
-# (safe to re-run: DO blocks below no-op if the grant/publication already exist).
-docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -v ON_ERROR_STOP=0 -c \
-  "GRANT SELECT ON public.outbox TO debezium_replicator;"
-docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -v ON_ERROR_STOP=0 -c \
-  "DO \$\$ BEGIN
-     IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'ledger_outbox_pub') THEN
-       CREATE PUBLICATION ledger_outbox_pub FOR TABLE public.outbox;
-     END IF;
-   END \$\$;"
-
-echo "Restarting transaction-processor so its Debezium engine (which needs the publication"
-echo "and grant above to already exist -- publication.autocreate.mode=disabled) starts clean..."
-docker compose restart transaction-processor > /dev/null
-echo "Waiting for transaction-processor to be healthy..."
-for i in $(seq 1 30); do
-  if curl -sf http://localhost:8081/actuator/health > /dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-
-# Defense-in-depth grace period: see the replication-slot-timing note above. Even after
-# transaction-processor reports healthy, DebeziumEngineLifecycle.start() returns before the
-# Postgres replication slot is actually confirmed to exist -- slot creation happens on a
-# background thread, roughly 700-800ms later. This pause gives that window room to close
-# before this script posts a transaction that the CDC pipeline must observe.
-echo "Grace period for CDC replication slot creation..."
-sleep 5
 
 echo "Seeding two test accounts..."
 docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -c \

@@ -37,11 +37,18 @@ for how V1 was built.
 ## Running locally
 
 ```bash
-make up            # builds and starts all 6 containers
+make up            # builds and starts all 6 containers, then provisions Toxiproxy + CDC
 make smoke-test     # posts a transaction end-to-end and verifies reconciliation is clean
 make chaos-test     # runs all 5 chaos scenarios
 make down           # tears down and removes volumes
 ```
+
+`make up` runs `docker compose up -d --build` followed by `scripts/provision.sh`, which
+configures the Toxiproxy proxies and the Debezium CDC grant/publication that the stack needs
+to actually work (see `scripts/provision.sh` for why these can't be baked into the compose
+file or Postgres init scripts). `make smoke-test` (`scripts/smoke-test.sh`) assumes
+provisioning has already happened and only does verification — if you bring the stack up some
+other way, run `bash scripts/provision.sh` once first.
 
 ## Running tests
 
@@ -71,3 +78,6 @@ pass and returns a summary of any findings.
   V1 could ship as a complete, focused artifact first.
 - No holds, multi-currency, fees, or external payment simulation yet — those are V2 through
   V5 of the full platform spec.
+- Write-path only — there is no `GET /transactions/{id}` and no account read endpoints in V1.
+  Accounts are seeded directly via SQL (see `scripts/smoke-test.sh` and the `chaos/` scripts)
+  rather than through an API, since account provisioning is out of scope for V1.

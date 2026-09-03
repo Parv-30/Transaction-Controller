@@ -3,6 +3,7 @@
 
 up:
 	docker compose up -d --build
+	bash scripts/provision.sh
 
 down:
 	docker compose down -v
