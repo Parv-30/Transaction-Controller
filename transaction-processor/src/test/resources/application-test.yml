@@ -3,3 +3,12 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  rabbitmq:
+    requested-heartbeat: 3
+    listener:
+      simple:
+        # Docker Desktop's forwarded-port proxy (used by Testcontainers on Windows/macOS)
+        # can drop an established AMQP connection with little warning; a short recovery
+        # interval (default 5000ms) lets the listener container reconnect quickly instead
+        # of leaving the test's await() window mostly consumed by the fixed backoff.
+        recovery-interval: 1000
