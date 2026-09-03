@@ -64,6 +64,21 @@
             <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-api</artifactId>
+            <version>2.7.3.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-embedded</artifactId>
+            <version>2.7.3.Final</version>
+        </dependency>
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-connector-postgres</artifactId>
+            <version>2.7.3.Final</version>
+        </dependency>
     </dependencies>
 
     <build>

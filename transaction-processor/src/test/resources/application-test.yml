@@ -12,3 +12,7 @@ spring:
         # interval (default 5000ms) lets the listener container reconnect quickly instead
         # of leaving the test's await() window mostly consumed by the fixed backoff.
         recovery-interval: 1000
+
+logging:
+  level:
+    com.ledger.txprocessor.cdc: DEBUG

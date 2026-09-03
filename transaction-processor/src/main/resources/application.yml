@@ -20,3 +20,17 @@ spring:
     username: ${RABBITMQ_USER:guest}
     password: ${RABBITMQ_PASSWORD:guest}
     requested-heartbeat: ${RABBITMQ_HEARTBEAT_SECONDS:10}
+
+cdc:
+  engine:
+    auto-startup: ${CDC_ENGINE_AUTO_STARTUP:true}
+  database:
+    hostname: ${CDC_DB_HOST:localhost}
+    port: ${CDC_DB_PORT:5432}
+    user: ${CDC_DB_USER:debezium_replicator}
+    password: ${CDC_DB_PASSWORD:debezium_replicator}
+    dbname: ${CDC_DB_NAME:ledger_db}
+  offset:
+    storage:
+      file:
+        filename: ${CDC_OFFSET_FILE:./debezium-offsets/offsets.dat}
