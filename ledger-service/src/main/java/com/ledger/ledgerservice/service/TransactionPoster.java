@@ -96,7 +96,7 @@ public class TransactionPoster {
         Account creditAccount = byId.get(creditAccountRef.getId());
 
         if (debitAccount.getStatus() != AccountStatus.ACTIVE || creditAccount.getStatus() != AccountStatus.ACTIVE) {
-            throw new IllegalStateException("One or both accounts are not ACTIVE");
+            throw new AccountNotActiveException("One or both accounts are not ACTIVE");
         }
         if (debitAccount.getBalanceMinor() < request.amountMinor()) {
             throw new InsufficientFundsException(debitAccount.getAccountRef());
