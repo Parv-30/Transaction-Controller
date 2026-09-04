@@ -7,12 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.util.MultiValueMapAdapter;
@@ -30,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class RoutingIntegrationTest {
+class OAuth2ResourceServerIntegrationTest {
 
     static GenericContainer<?> keycloak = new GenericContainer<>("quay.io/keycloak/keycloak:25.0")
             .withCommand("start-dev", "--import-realm")
@@ -43,47 +38,37 @@ class RoutingIntegrationTest {
             .waitingFor(Wait.forHttp("/realms/ledger").forStatusCode(200).withStartupTimeout(Duration.ofMinutes(2)));
 
     static HttpServer stubLedger;
-    static HttpServer stubHolds;
+
+    @BeforeAll
+    static void startAll() throws Exception {
+        keycloak.start();
+        stubLedger = HttpServer.create(new InetSocketAddress(0), 0);
+        stubLedger.createContext("/transactions", exchange -> {
+            byte[] response = "ledger-stub".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stubLedger.start();
+    }
+
+    @AfterAll
+    static void stopAll() {
+        keycloak.stop();
+        stubLedger.stop(0);
+    }
+
+    @DynamicPropertySource
+    static void registerProps(DynamicPropertyRegistry registry) {
+        String issuerUri = "http://" + keycloak.getHost() + ":" + keycloak.getMappedPort(8080) + "/realms/ledger";
+        registry.add("KEYCLOAK_ISSUER_URI", () -> issuerUri);
+        registry.add("LEDGER_SERVICE_URL", () -> "http://localhost:" + stubLedger.getAddress().getPort());
+    }
 
     @LocalServerPort
     private int gatewayPort;
 
     private final TestRestTemplate restTemplate = new TestRestTemplate();
-
-    @BeforeAll
-    static void startStubs() throws Exception {
-        keycloak.start();
-
-        stubLedger = HttpServer.create(new InetSocketAddress(0), 0);
-        stubLedger.createContext("/transactions", exchange -> respond(exchange, "ledger-stub"));
-        stubLedger.start();
-
-        stubHolds = HttpServer.create(new InetSocketAddress(0), 0);
-        stubHolds.createContext("/holds", exchange -> respond(exchange, "holds-stub"));
-        stubHolds.start();
-    }
-
-    @AfterAll
-    static void stopStubs() {
-        keycloak.stop();
-        stubLedger.stop(0);
-        stubHolds.stop(0);
-    }
-
-    @DynamicPropertySource
-    static void registerStubUrls(DynamicPropertyRegistry registry) {
-        String issuerUri = "http://" + keycloak.getHost() + ":" + keycloak.getMappedPort(8080) + "/realms/ledger";
-        registry.add("KEYCLOAK_ISSUER_URI", () -> issuerUri);
-        registry.add("LEDGER_SERVICE_URL", () -> "http://localhost:" + stubLedger.getAddress().getPort());
-        registry.add("HOLDS_SERVICE_URL", () -> "http://localhost:" + stubHolds.getAddress().getPort());
-    }
-
-    private static void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws java.io.IOException {
-        byte[] response = body.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(200, response.length);
-        exchange.getResponseBody().write(response);
-        exchange.close();
-    }
 
     private String issuerBaseUrl() {
         return "http://" + keycloak.getHost() + ":" + keycloak.getMappedPort(8080) + "/realms/ledger";
@@ -103,27 +88,24 @@ class RoutingIntegrationTest {
         return (String) response.getBody().get("access_token");
     }
 
-    private HttpHeaders authHeaders() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(obtainClientCredentialsToken());
-        return headers;
+    @Test
+    void requestWithoutTokenIsRejected() {
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "http://localhost:" + gatewayPort + "/transactions", null, String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
     @Test
-    void routesTransactionsPathToLedgerService() {
+    void requestWithValidClientCredentialsTokenIsRoutedThrough() {
+        String token = obtainClientCredentialsToken();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+
         ResponseEntity<String> response = restTemplate.exchange(
                 "http://localhost:" + gatewayPort + "/transactions", HttpMethod.POST,
-                new HttpEntity<>(authHeaders()), String.class);
+                new HttpEntity<>(headers), String.class);
+
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isEqualTo("ledger-stub");
-    }
-
-    @Test
-    void routesHoldsPathToHoldsService() {
-        ResponseEntity<String> response = restTemplate.exchange(
-                "http://localhost:" + gatewayPort + "/holds", HttpMethod.POST,
-                new HttpEntity<>(authHeaders()), String.class);
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).isEqualTo("holds-stub");
     }
 }

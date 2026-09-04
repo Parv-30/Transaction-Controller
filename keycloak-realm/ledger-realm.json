@@ -1,0 +1,62 @@
+{
+  "realm": "ledger",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "clients": [
+    {
+      "clientId": "chaos-suite-client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "chaos-suite-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "smoke-test-client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "smoke-test-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "demo-users-client",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "demo-users-secret",
+      "publicClient": false,
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "credentials": [
+        {"type": "password", "value": "alice-password", "temporary": false}
+      ],
+      "realmRoles": ["user"]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.com",
+      "credentials": [
+        {"type": "password", "value": "bob-password", "temporary": false}
+      ],
+      "realmRoles": ["user"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {"name": "user"}
+    ]
+  }
+}
