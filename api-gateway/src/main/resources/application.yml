@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: ledger-transactions
+          uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
+          predicates:
+            - Path=/transactions/**
+        - id: ledger-reconciliation
+          uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
+          predicates:
+            - Path=/reconciliation/**
+        - id: holds
+          uri: ${HOLDS_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/holds/**
+        - id: holds-available-balance
+          uri: ${HOLDS_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/accounts/*/available-balance
