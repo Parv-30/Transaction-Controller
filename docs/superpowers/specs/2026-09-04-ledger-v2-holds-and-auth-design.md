@@ -110,10 +110,23 @@ re-validated against Ledger's authoritative balance at hold-creation time.
 
 **Schema (`holds_db`)**:
 
+Ledger Service's internal `accounts.id` (UUID) is distinct from its external-facing
+`account_ref` (string) — `POST /transactions` addresses accounts by `account_ref`, not by
+Ledger's internal UUID, which Holds Service never sees. Holds Service therefore identifies
+accounts by `account_ref` (string) throughout its own schema and API, so capture can call
+`POST /transactions` directly without an extra resolution round-trip.
+
+Capturing a hold produces a Ledger transaction with two sides — a debit (the held account)
+and a credit (a destination). `POST /holds` therefore takes both a source `accountRef` (the
+account being held) and a `destinationAccountRef` (e.g. a merchant/payee account) up front,
+mirroring how a real card hold authorizes a specific merchant charge; both are stored on the
+hold row and used verbatim at capture time.
+
 ```sql
 CREATE TABLE holds (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id              UUID NOT NULL,
+    account_ref             VARCHAR(128) NOT NULL,
+    destination_account_ref VARCHAR(128) NOT NULL,
     amount_minor            BIGINT NOT NULL CHECK (amount_minor > 0),
     currency                CHAR(3) NOT NULL,
     status                  VARCHAR(16) NOT NULL CHECK (status IN ('ACTIVE','CAPTURED','RELEASED','EXPIRED')),
@@ -125,10 +138,10 @@ CREATE TABLE holds (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_holds_account_status ON holds(account_id, status);
+CREATE INDEX idx_holds_account_status ON holds(account_ref, status);
 
 CREATE TABLE account_balance_cache (
-    account_id      UUID PRIMARY KEY,
+    account_ref     VARCHAR(128) PRIMARY KEY,
     posted_balance_minor  BIGINT NOT NULL DEFAULT 0,
     held_balance_minor    BIGINT NOT NULL DEFAULT 0,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -151,16 +164,18 @@ CREATE TABLE processed_events (
 ```
 
 **API**:
-- `POST /holds` — body `{accountId, amountMinor, currency, expiresInSeconds}`, header
-  `Idempotency-Key`. Returns `{holdId, status: ACTIVE, expiresAt}`.
+- `POST /holds` — body `{accountRef, destinationAccountRef, amountMinor, currency,
+  expiresInSeconds}`, header `Idempotency-Key`. Returns `{holdId, status: ACTIVE, expiresAt}`.
 - `POST /holds/{id}/capture` — body `{amountMinor}` (≤ remaining hold amount, partial
   capture supported), header `Idempotency-Key`. Calls Transaction Processor's
-  `POST /transactions` with `Idempotency-Key = hold-capture-{holdId}`; on success marks the
-  hold `CAPTURED` (any uncaptured remainder is released in the same operation).
+  `POST /transactions` with `debitAccountRef = hold.accountRef`,
+  `creditAccountRef = hold.destinationAccountRef`, and
+  `Idempotency-Key = hold-capture-{holdId}`; on success marks the hold `CAPTURED` (any
+  uncaptured remainder is released in the same operation).
 - `POST /holds/{id}/release` — releases the remaining hold amount. Idempotent: a no-op if
   the hold is already in a terminal state.
 - `GET /holds/{id}` — status lookup.
-- `GET /accounts/{accountId}/available-balance` — `posted_balance_minor - held_balance_minor`.
+- `GET /accounts/{accountRef}/available-balance` — `posted_balance_minor - held_balance_minor`.
 
 **Integration with Ledger/Transaction Processor**: placing a hold never touches Ledger — it
 only adjusts `held_balance_minor` locally. Only capture calls the real, idempotent
