@@ -1,11 +1,15 @@
 package com.ledger.holdsservice.service;
 
+import com.ledger.holdsservice.api.dto.AvailableBalanceResponse;
 import com.ledger.holdsservice.api.dto.CreateHoldRequest;
 import com.ledger.holdsservice.api.dto.HoldResponse;
+import com.ledger.holdsservice.domain.AccountBalanceCache;
 import com.ledger.holdsservice.domain.Hold;
+import com.ledger.holdsservice.repository.AccountBalanceCacheRepository;
 import com.ledger.holdsservice.repository.HoldRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
@@ -15,12 +19,15 @@ public class HoldService {
     private final HoldPoster holdPoster;
     private final HoldRepository holdRepository;
     private final LedgerTransactionClient ledgerTransactionClient;
+    private final AccountBalanceCacheRepository accountBalanceCacheRepository;
 
     public HoldService(HoldPoster holdPoster, HoldRepository holdRepository,
-                        LedgerTransactionClient ledgerTransactionClient) {
+                        LedgerTransactionClient ledgerTransactionClient,
+                        AccountBalanceCacheRepository accountBalanceCacheRepository) {
         this.holdPoster = holdPoster;
         this.holdRepository = holdRepository;
         this.ledgerTransactionClient = ledgerTransactionClient;
+        this.accountBalanceCacheRepository = accountBalanceCacheRepository;
     }
 
     public HoldResponse createHold(CreateHoldRequest request, String idempotencyKey) {
@@ -56,5 +63,22 @@ public class HoldService {
                 "hold-capture-" + holdId);
 
         return holdPoster.completeCaptureInTransaction(holdId, amountMinor, result.transactionId());
+    }
+
+    /**
+     * Read-only lookup for {@code GET /accounts/{accountRef}/available-balance}. An account with
+     * no cache row yet (never held funds, never had a ledger.transaction.posted event consumed
+     * for it) is treated as a zero-balance account rather than "not found" — the same convention
+     * used by {@link HoldPoster#createInTransaction} and
+     * {@code LedgerTransactionPostedApplier#upsertPostedBalance}, both of which synthesize a
+     * fresh {@code AccountBalanceCache(accountRef, 0, 0)} instead of raising an error when no row
+     * exists yet. No row is persisted here since this is a plain read.
+     */
+    @Transactional(readOnly = true)
+    public AvailableBalanceResponse getAvailableBalance(String accountRef) {
+        AccountBalanceCache cache = accountBalanceCacheRepository.findById(accountRef)
+                .orElseGet(() -> new AccountBalanceCache(accountRef, 0L, 0L));
+        return new AvailableBalanceResponse(accountRef, cache.getPostedBalanceMinor(),
+                cache.getHeldBalanceMinor(), cache.availableBalanceMinor());
     }
 }

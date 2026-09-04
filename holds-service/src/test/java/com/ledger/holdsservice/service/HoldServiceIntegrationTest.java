@@ -1,5 +1,6 @@
 package com.ledger.holdsservice.service;
 
+import com.ledger.holdsservice.api.dto.AvailableBalanceResponse;
 import com.ledger.holdsservice.api.dto.CreateHoldRequest;
 import com.ledger.holdsservice.api.dto.HoldResponse;
 import com.ledger.holdsservice.domain.AccountBalanceCache;
@@ -117,5 +118,29 @@ class HoldServiceIntegrationTest {
         assertThat(secondRelease.status()).isEqualTo("RELEASED");
         AccountBalanceCache cache = accountBalanceCacheRepository.findById("acct-holds-a").orElseThrow();
         assertThat(cache.availableBalanceMinor()).isEqualTo(10_000L); // not double-released
+    }
+
+    @Test
+    void availableBalanceReflectsPostedAndHeldAmountsForKnownAccount() {
+        var request = new CreateHoldRequest("acct-holds-a", "acct-merchant", 4_000L, "USD", 3600);
+        holdService.createHold(request, "hold-key-6");
+
+        AvailableBalanceResponse response = holdService.getAvailableBalance("acct-holds-a");
+
+        assertThat(response.accountRef()).isEqualTo("acct-holds-a");
+        assertThat(response.postedBalanceMinor()).isEqualTo(10_000L);
+        assertThat(response.heldBalanceMinor()).isEqualTo(4_000L);
+        assertThat(response.availableBalanceMinor()).isEqualTo(6_000L);
+    }
+
+    @Test
+    void availableBalanceForUnknownAccountIsZeroRatherThanNotFound() {
+        AvailableBalanceResponse response = holdService.getAvailableBalance("acct-never-seen");
+
+        assertThat(response.accountRef()).isEqualTo("acct-never-seen");
+        assertThat(response.postedBalanceMinor()).isZero();
+        assertThat(response.heldBalanceMinor()).isZero();
+        assertThat(response.availableBalanceMinor()).isZero();
+        assertThat(accountBalanceCacheRepository.findById("acct-never-seen")).isEmpty();
     }
 }

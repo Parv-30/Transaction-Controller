@@ -1,5 +1,6 @@
 package com.ledger.holdsservice.api;
 
+import com.ledger.holdsservice.api.dto.AvailableBalanceResponse;
 import com.ledger.holdsservice.api.dto.CaptureHoldRequest;
 import com.ledger.holdsservice.api.dto.CreateHoldRequest;
 import com.ledger.holdsservice.api.dto.HoldResponse;
@@ -47,5 +48,10 @@ public class HoldController {
             @PathVariable("id") UUID id,
             @RequestBody CaptureHoldRequest request) {
         return ResponseEntity.ok(holdService.capture(id, request.amountMinor()));
+    }
+
+    @GetMapping("/accounts/{accountRef}/available-balance")
+    public ResponseEntity<AvailableBalanceResponse> availableBalance(@PathVariable("accountRef") String accountRef) {
+        return ResponseEntity.ok(holdService.getAvailableBalance(accountRef));
     }
 }
