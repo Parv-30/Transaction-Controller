@@ -12,6 +12,7 @@
     <modules>
         <module>ledger-service</module>
         <module>transaction-processor</module>
+        <module>holds-service</module>
     </modules>
 
     <properties>
