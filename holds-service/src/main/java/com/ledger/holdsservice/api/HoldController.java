@@ -1,5 +1,6 @@
 package com.ledger.holdsservice.api;
 
+import com.ledger.holdsservice.api.dto.CaptureHoldRequest;
 import com.ledger.holdsservice.api.dto.CreateHoldRequest;
 import com.ledger.holdsservice.api.dto.HoldResponse;
 import com.ledger.holdsservice.service.HoldService;
@@ -39,5 +40,12 @@ public class HoldController {
     @GetMapping("/holds/{id}")
     public ResponseEntity<HoldResponse> get(@PathVariable("id") UUID id) {
         return ResponseEntity.ok(holdService.getHold(id));
+    }
+
+    @PostMapping("/holds/{id}/capture")
+    public ResponseEntity<HoldResponse> capture(
+            @PathVariable("id") UUID id,
+            @RequestBody CaptureHoldRequest request) {
+        return ResponseEntity.ok(holdService.capture(id, request.amountMinor()));
     }
 }

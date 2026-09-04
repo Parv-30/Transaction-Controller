@@ -14,10 +14,13 @@ public class HoldService {
 
     private final HoldPoster holdPoster;
     private final HoldRepository holdRepository;
+    private final LedgerTransactionClient ledgerTransactionClient;
 
-    public HoldService(HoldPoster holdPoster, HoldRepository holdRepository) {
+    public HoldService(HoldPoster holdPoster, HoldRepository holdRepository,
+                        LedgerTransactionClient ledgerTransactionClient) {
         this.holdPoster = holdPoster;
         this.holdRepository = holdRepository;
+        this.ledgerTransactionClient = ledgerTransactionClient;
     }
 
     public HoldResponse createHold(CreateHoldRequest request, String idempotencyKey) {
@@ -42,5 +45,16 @@ public class HoldService {
     public HoldResponse getHold(UUID holdId) {
         Hold hold = holdRepository.findById(holdId).orElseThrow(() -> new HoldNotFoundException(holdId));
         return holdPoster.toResponse(hold, false);
+    }
+
+    public HoldResponse capture(UUID holdId, long amountMinor) {
+        var hold = holdPoster.validateCaptureRequest(holdId, amountMinor);
+
+        var result = ledgerTransactionClient.postTransaction(
+                hold.getAccountRef(), hold.getDestinationAccountRef(), amountMinor,
+                hold.getCurrency(), "hold capture " + holdId,
+                "hold-capture-" + holdId);
+
+        return holdPoster.completeCaptureInTransaction(holdId, amountMinor, result.transactionId());
     }
 }
