@@ -7,6 +7,8 @@ processor:
 holds:
   expiry-sweep:
     interval-ms: ${HOLDS_EXPIRY_SWEEP_INTERVAL_MS:60000}
+  outbox-poll:
+    interval-ms: ${HOLDS_OUTBOX_POLL_INTERVAL_MS:2000}
 
 spring:
   application:
@@ -21,3 +23,8 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
