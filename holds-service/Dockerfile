@@ -5,12 +5,12 @@ COPY ledger-service/pom.xml ledger-service/pom.xml
 COPY transaction-processor/pom.xml transaction-processor/pom.xml
 COPY holds-service/pom.xml holds-service/pom.xml
 COPY api-gateway/pom.xml api-gateway/pom.xml
-RUN mvn -q -pl transaction-processor -am dependency:go-offline
-COPY transaction-processor transaction-processor
-RUN mvn -q -pl transaction-processor -am package -DskipTests
+RUN mvn -q -pl holds-service -am dependency:go-offline
+COPY holds-service holds-service
+RUN mvn -q -pl holds-service -am package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
-COPY --from=build /workspace/transaction-processor/target/transaction-processor-*.jar app.jar
-EXPOSE 8081
+COPY --from=build /workspace/holds-service/target/holds-service-*.jar app.jar
+EXPOSE 8082
 ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -13,6 +13,16 @@
 TOXIPROXY_API="${TOXIPROXY_API:-http://localhost:8474}"
 LEDGER_URL="${LEDGER_URL:-http://localhost:8080}"
 PROCESSOR_URL="${PROCESSOR_URL:-http://localhost:8081}"
+KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL:-http://localhost:8180/realms/ledger/protocol/openid-connect/token}"
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:8080}"
+
+get_chaos_suite_token() {
+  curl -sf -X POST "$KEYCLOAK_TOKEN_URL" \
+    -d "grant_type=client_credentials" \
+    -d "client_id=chaos-suite-client" \
+    -d "client_secret=chaos-suite-secret" \
+    | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4
+}
 
 add_toxic() {
   local proxy_name="$1"
@@ -52,7 +62,8 @@ post_transaction() {
   local credit_ref="$2"
   local amount="$3"
   local idem_key="$4"
-  curl -s -w "\n%{http_code}" -X POST "$LEDGER_URL/transactions" \
+  curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/transactions" \
+    -H "Authorization: Bearer $(get_chaos_suite_token)" \
     -H "Content-Type: application/json" \
     -H "Idempotency-Key: $idem_key" \
     -d "{\"debitAccountRef\":\"$debit_ref\",\"creditAccountRef\":\"$credit_ref\",\"amountMinor\":$amount,\"currency\":\"USD\",\"description\":\"chaos test\"}"
@@ -95,7 +106,8 @@ wait_for_processed_status() {
 }
 
 trigger_reconciliation() {
-  curl -sf -X POST "$LEDGER_URL/reconciliation/runs"
+  curl -sf -X POST "$GATEWAY_URL/reconciliation/runs" \
+    -H "Authorization: Bearer $(get_chaos_suite_token)"
 }
 
 assert_reconciliation_clean() {

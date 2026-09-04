@@ -16,12 +16,23 @@
 # script's reconciliation-polling loop will simply time out.
 set -euo pipefail
 
+GATEWAY_URL="${GATEWAY_URL:-http://localhost:8080}"
+KEYCLOAK_TOKEN_URL="${KEYCLOAK_TOKEN_URL:-http://localhost:8180/realms/ledger/protocol/openid-connect/token}"
+
+echo "Fetching a Keycloak service-account token for smoke-test-client..."
+TOKEN=$(curl -sf -X POST "$KEYCLOAK_TOKEN_URL" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=smoke-test-client" \
+  -d "client_secret=smoke-test-secret" \
+  | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+
 echo "Seeding two test accounts..."
 docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -c \
   "INSERT INTO accounts (id, account_ref, balance_minor) VALUES (gen_random_uuid(), 'smoke-a', 5000), (gen_random_uuid(), 'smoke-b', 0) ON CONFLICT (account_ref) DO NOTHING;"
 
 echo "Posting a transaction..."
-RESPONSE=$(curl -sf -X POST http://localhost:8080/transactions \
+RESPONSE=$(curl -sf -X POST "$GATEWAY_URL/transactions" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: smoke-$(date +%s)" \
   -d '{"debitAccountRef":"smoke-a","creditAccountRef":"smoke-b","amountMinor":500,"currency":"USD","description":"smoke test"}')
@@ -35,7 +46,8 @@ echo "captured, published, and consumed the outbox row, rather than trusting a f
 CLEAN=""
 RECON_RESPONSE=""
 for i in $(seq 1 15); do
-  RECON_RESPONSE=$(curl -sf -X POST http://localhost:8080/reconciliation/runs)
+  RECON_RESPONSE=$(curl -sf -X POST "$GATEWAY_URL/reconciliation/runs" \
+    -H "Authorization: Bearer $TOKEN")
   echo "  [attempt $i] $RECON_RESPONSE"
   if echo "$RECON_RESPONSE" | grep -q '"entriesImbalanceCount":0' \
      && echo "$RECON_RESPONSE" | grep -q '"outboxMissingCount":0' \
@@ -46,13 +58,45 @@ for i in $(seq 1 15); do
   sleep 4
 done
 
-echo ""
-if [ "$CLEAN" = "yes" ]; then
-  echo "Smoke test complete: reconciliation is clean."
-  echo "Final result: $RECON_RESPONSE"
-  exit 0
-else
+if [ "$CLEAN" != "yes" ]; then
+  echo ""
   echo "Smoke test FAILED: reconciliation did not reach a clean state within the timeout."
   echo "Last result: $RECON_RESPONSE"
   exit 1
 fi
+
+echo ""
+echo "Reconciliation clean. Verifying the Holds flow through the gateway..."
+echo "(Holds Service's own account_balance_cache is synced asynchronously from RabbitMQ,"
+echo "downstream of the same CDC pipeline just verified above -- a clean ledger-side"
+echo "reconciliation does not guarantee Holds Service has consumed this transaction's event"
+echo "yet, so retry a few times rather than treating the first attempt as authoritative.)"
+HOLD_STATUS=""
+HOLD_HTTP_CODE=""
+HOLD_BODY=""
+for i in $(seq 1 10); do
+  HOLD_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/holds" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -H "Idempotency-Key: smoke-hold-$(date +%s)-$i" \
+    -d '{"accountRef":"smoke-a","destinationAccountRef":"smoke-b","amountMinor":500,"currency":"USD","expiresInSeconds":3600}')
+  HOLD_HTTP_CODE=$(echo "$HOLD_RESPONSE" | tail -n1)
+  HOLD_BODY=$(echo "$HOLD_RESPONSE" | head -n-1)
+  echo "  [attempt $i] ($HOLD_HTTP_CODE) $HOLD_BODY"
+  if [ "$HOLD_HTTP_CODE" = "201" ] && echo "$HOLD_BODY" | grep -q '"status":"ACTIVE"'; then
+    HOLD_STATUS="ok"
+    break
+  fi
+  sleep 3
+done
+
+if [ "$HOLD_STATUS" != "ok" ]; then
+  echo "Smoke test FAILED: expected HTTP 201 with status ACTIVE creating a hold through the"
+  echo "gateway, got ($HOLD_HTTP_CODE) $HOLD_BODY"
+  exit 1
+fi
+
+echo ""
+echo "Smoke test complete: reconciliation is clean and the Holds flow works through the gateway."
+echo "Final reconciliation result: $RECON_RESPONSE"
+exit 0

@@ -3,6 +3,8 @@ WORKDIR /workspace
 COPY pom.xml .
 COPY ledger-service/pom.xml ledger-service/pom.xml
 COPY transaction-processor/pom.xml transaction-processor/pom.xml
+COPY holds-service/pom.xml holds-service/pom.xml
+COPY api-gateway/pom.xml api-gateway/pom.xml
 RUN mvn -q -pl ledger-service -am dependency:go-offline
 COPY ledger-service ledger-service
 RUN mvn -q -pl ledger-service -am package -DskipTests

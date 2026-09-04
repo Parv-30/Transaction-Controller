@@ -66,8 +66,9 @@ services:
       DB_USER: ledger
       DB_PASSWORD: ledger
       PROCESSOR_BASE_URL: http://transaction-processor:8081
+      SERVER_PORT: "8090"
     ports:
-      - "8080:8080"
+      - "8090:8090"
     depends_on:
       ledger-postgres:
         condition: service_healthy
@@ -104,7 +105,94 @@ services:
       toxiproxy:
         condition: service_started
 
+  holds-db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: holds_db
+      POSTGRES_USER: holds
+      POSTGRES_PASSWORD: holds
+    volumes:
+      - holds-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U holds -d holds_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  holds-service:
+    build:
+      context: .
+      dockerfile: holds-service/Dockerfile
+    environment:
+      DB_HOST: holds-db
+      DB_PORT: "5432"
+      DB_NAME: holds_db
+      DB_USER: holds
+      DB_PASSWORD: holds
+      PROCESSOR_BASE_URL: http://transaction-processor:8081
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+    ports:
+      - "8082:8082"
+    depends_on:
+      holds-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # Fixes the issuer claim to a single stable value (http://host.docker.internal:8180/realms/ledger)
+      # regardless of which hostname/network path a client used to reach Keycloak. Without this,
+      # Keycloak's dev-mode default (issuer derived from the request's own Host header) means a token
+      # fetched by a host-side script hitting localhost:8180 carries a different "iss" claim than what
+      # api-gateway (running inside the Docker network, validating via KEYCLOAK_ISSUER_URI) expects --
+      # producing a silent 401 on every request even with a structurally valid token (confirmed by
+      # reproduction). host.docker.internal is reachable both from the host (via the published 8180
+      # port, through Docker Desktop's loopback) and from other containers, so both api-gateway and any
+      # host-side curl/script resolve to the same issuer string.
+      KC_HOSTNAME: host.docker.internal
+      KC_HOSTNAME_PORT: "8180"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./keycloak-realm:/opt/keycloak/data/import
+    ports:
+      - "8180:8080"
+    healthcheck:
+      # The quay.io/keycloak/keycloak image ships neither curl nor wget, so the healthcheck
+      # uses bash's /dev/tcp to issue a raw HTTP request instead (confirmed by reproduction:
+      # a curl-based healthcheck fails with "executable file not found in $PATH", leaving the
+      # container running but permanently "unhealthy" and blocking api-gateway's depends_on).
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && printf 'GET /realms/ledger HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && head -1 <&3 | grep -q 'HTTP/1.1 200'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    environment:
+      LEDGER_SERVICE_URL: http://ledger-service:8090
+      HOLDS_SERVICE_URL: http://holds-service:8082
+      KEYCLOAK_ISSUER_URI: http://host.docker.internal:8180/realms/ledger
+    ports:
+      - "8080:8080"
+    depends_on:
+      ledger-service:
+        condition: service_started
+      holds-service:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+
 volumes:
   ledger-pgdata:
   processor-pgdata:
   debezium-offsets:
+  holds-pgdata:
