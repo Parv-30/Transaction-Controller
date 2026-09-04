@@ -99,7 +99,7 @@ public class HoldPoster {
                 .orElseThrow(() -> new HoldNotFoundException(holdId));
 
         if (hold.getStatus() != HoldStatus.ACTIVE) {
-            throw new IllegalStateException("Hold " + holdId + " is not ACTIVE (status: " + hold.getStatus() + ")");
+            throw new HoldNotActiveException(holdId, hold.getStatus());
         }
         if (amountMinor > hold.remainingAmountMinor()) {
             throw new CaptureExceedsRemainingAmountException(holdId, amountMinor, hold.remainingAmountMinor());

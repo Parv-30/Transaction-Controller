@@ -57,7 +57,7 @@ class HoldCaptureIntegrationTest {
             exchange.close();
         });
         stubProcessor.start();
-        registry.add("processor.base-url", () -> "http://localhost:" + stubProcessor.getAddress().getPort());
+        registry.add("ledger.base-url", () -> "http://localhost:" + stubProcessor.getAddress().getPort());
     }
 
     @Autowired

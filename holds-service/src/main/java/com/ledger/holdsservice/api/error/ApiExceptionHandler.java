@@ -2,6 +2,7 @@ package com.ledger.holdsservice.api.error;
 
 import com.ledger.holdsservice.service.CaptureExceedsRemainingAmountException;
 import com.ledger.holdsservice.service.HoldIdempotencyConflictException;
+import com.ledger.holdsservice.service.HoldNotActiveException;
 import com.ledger.holdsservice.service.HoldNotFoundException;
 import com.ledger.holdsservice.service.InsufficientAvailableBalanceException;
 import org.springframework.http.HttpStatus;
@@ -32,5 +33,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(CaptureExceedsRemainingAmountException.class)
     public ResponseEntity<Map<String, String>> handleCaptureExceedsRemaining(CaptureExceedsRemainingAmountException e) {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(HoldNotActiveException.class)
+    public ResponseEntity<Map<String, String>> handleHoldNotActive(HoldNotActiveException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 }

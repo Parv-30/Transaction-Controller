@@ -14,8 +14,8 @@ public class LedgerTransactionClient {
 
     private final RestClient restClient;
 
-    public LedgerTransactionClient(@Value("${processor.base-url}") String processorBaseUrl) {
-        this.restClient = RestClient.builder().baseUrl(processorBaseUrl).build();
+    public LedgerTransactionClient(@Value("${ledger.base-url}") String ledgerBaseUrl) {
+        this.restClient = RestClient.builder().baseUrl(ledgerBaseUrl).build();
     }
 
     public PostTransactionResult postTransaction(String debitAccountRef, String creditAccountRef,

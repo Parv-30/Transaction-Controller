@@ -96,7 +96,27 @@ if [ "$HOLD_STATUS" != "ok" ]; then
   exit 1
 fi
 
+HOLD_ID=$(echo "$HOLD_BODY" | grep -o '"holdId":"[^"]*"' | cut -d'"' -f4)
+echo "Hold ID: $HOLD_ID"
+
 echo ""
-echo "Smoke test complete: reconciliation is clean and the Holds flow works through the gateway."
+echo "Capturing the hold through the gateway..."
+CAPTURE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/holds/$HOLD_ID/capture" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"amountMinor":500}')
+CAPTURE_HTTP_CODE=$(echo "$CAPTURE_RESPONSE" | tail -n1)
+CAPTURE_BODY=$(echo "$CAPTURE_RESPONSE" | head -n-1)
+echo "  ($CAPTURE_HTTP_CODE) $CAPTURE_BODY"
+
+if [ "$CAPTURE_HTTP_CODE" != "200" ] || ! echo "$CAPTURE_BODY" | grep -q '"status":"CAPTURED"'; then
+  echo "Smoke test FAILED: expected HTTP 200 with status CAPTURED capturing the hold through"
+  echo "the gateway, got ($CAPTURE_HTTP_CODE) $CAPTURE_BODY"
+  exit 1
+fi
+
+echo ""
+echo "Smoke test complete: reconciliation is clean and the Holds flow (create + capture) works"
+echo "through the gateway."
 echo "Final reconciliation result: $RECON_RESPONSE"
 exit 0

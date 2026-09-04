@@ -129,7 +129,7 @@ services:
       DB_NAME: holds_db
       DB_USER: holds
       DB_PASSWORD: holds
-      PROCESSOR_BASE_URL: http://transaction-processor:8081
+      LEDGER_SERVICE_URL: http://ledger-service:8090
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "5672"
     ports:
@@ -139,6 +139,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      ledger-service:
+        condition: service_started
 
   keycloak:
     image: quay.io/keycloak/keycloak:25.0

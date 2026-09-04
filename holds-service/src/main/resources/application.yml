@@ -1,8 +1,8 @@
 server:
   port: 8082
 
-processor:
-  base-url: ${PROCESSOR_BASE_URL:http://localhost:8081}
+ledger:
+  base-url: ${LEDGER_SERVICE_URL:http://localhost:8090}
 
 holds:
   expiry-sweep:
