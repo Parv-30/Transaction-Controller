@@ -4,6 +4,10 @@ server:
 processor:
   base-url: ${PROCESSOR_BASE_URL:http://localhost:8081}
 
+holds:
+  expiry-sweep:
+    interval-ms: ${HOLDS_EXPIRY_SWEEP_INTERVAL_MS:60000}
+
 spring:
   application:
     name: holds-service

@@ -134,6 +134,32 @@ public class HoldPoster {
         return toResponse(hold, false);
     }
 
+    /**
+     * Expires a single ACTIVE hold that is past its expires_at. Locks the account balance cache
+     * row, decrements held_balance by the hold's remaining (uncaptured) amount, marks the hold
+     * EXPIRED, and emits hold.released — all in one transaction per hold, so a crash mid-sweep
+     * leaves already-processed holds correctly expired and simply picks up the rest on the next
+     * scheduled run (each hold's expiry is independently idempotent: an already-EXPIRED hold is
+     * never re-selected by the WHERE clause driving the sweep).
+     */
+    @Transactional
+    public void expireHoldInTransaction(UUID holdId) {
+        Hold hold = holdRepository.findById(holdId).orElseThrow(() -> new HoldNotFoundException(holdId));
+        if (hold.getStatus() != HoldStatus.ACTIVE) {
+            return; // already handled by a prior sweep run or a concurrent capture/release
+        }
+
+        AccountBalanceCache cache = accountBalanceCacheRepository.lockByAccountRef(hold.getAccountRef())
+                .orElseThrow(() -> new IllegalStateException("Missing balance cache for " + hold.getAccountRef()));
+        cache.releaseHeld(hold.remainingAmountMinor());
+        accountBalanceCacheRepository.save(cache);
+
+        hold.markExpired();
+        holdRepository.save(hold);
+
+        outboxRepository.save(new OutboxEvent(UUID.randomUUID(), holdId, "hold.released", writePayload(hold)));
+    }
+
     HoldResponse toResponse(Hold hold, boolean replay) {
         return new HoldResponse(hold.getId(), hold.getStatus().name(), hold.getAccountRef(),
                 hold.getDestinationAccountRef(), hold.getAmountMinor(), hold.getCapturedAmountMinor(),
