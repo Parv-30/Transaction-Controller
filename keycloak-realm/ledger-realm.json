@@ -39,6 +39,8 @@
       "username": "alice",
       "enabled": true,
       "email": "alice@example.com",
+      "firstName": "Alice",
+      "lastName": "Demo",
       "credentials": [
         {"type": "password", "value": "alice-password", "temporary": false}
       ],
@@ -48,6 +50,8 @@
       "username": "bob",
       "enabled": true,
       "email": "bob@example.com",
+      "firstName": "Bob",
+      "lastName": "Demo",
       "credentials": [
         {"type": "password", "value": "bob-password", "temporary": false}
       ],
