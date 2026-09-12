@@ -17,5 +17,7 @@ spring:
 
 processor:
   base-url: ${PROCESSOR_BASE_URL:http://localhost:8081}
+fx:
+  base-url: ${FX_SERVICE_URL:http://localhost:8083}
 reconciliation:
   interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
