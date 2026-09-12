@@ -4,3 +4,14 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+
+# Default for the test profile: an unreachable address so that any @SpringBootTest context
+# that doesn't override this itself (e.g. via its own WireMock @DynamicPropertySource) gets a
+# fast connection failure from the scheduled RateSyncJob rather than making a live call to the
+# real Frankfurter API. RateSyncJob.syncNow catches per-base-currency exceptions and logs a
+# warning, so this is harmless when the job fires during an unrelated test's context lifecycle.
+# Tests that need real sync behavior (RateSyncJobIntegrationTest) override this property via
+# @DynamicPropertySource, which Spring Boot always applies with higher precedence than any
+# properties file -- including this one.
+frankfurter:
+  base-url: http://localhost:1
