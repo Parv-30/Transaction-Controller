@@ -98,7 +98,12 @@ public class TransactionPoster {
         if (debitAccount.getStatus() != AccountStatus.ACTIVE || creditAccount.getStatus() != AccountStatus.ACTIVE) {
             throw new AccountNotActiveException("One or both accounts are not ACTIVE");
         }
-        if (debitAccount.getBalanceMinor() < request.amountMinor()) {
+        // FX clearing accounts are the platform's internal netting mechanism, not real funded
+        // accounts: leg 2 of a cross-currency transfer debits the destination-currency clearing
+        // account, which is expected to run negative by convention. This bypass is narrowly
+        // scoped to the "fx-clearing-" ref prefix; ordinary accounts keep the check unchanged.
+        boolean debitAccountAllowsNegativeBalance = debitAccount.getAccountRef().startsWith("fx-clearing-");
+        if (!debitAccountAllowsNegativeBalance && debitAccount.getBalanceMinor() < request.amountMinor()) {
             throw new InsufficientFundsException(debitAccount.getAccountRef());
         }
 

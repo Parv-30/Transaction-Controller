@@ -128,6 +128,34 @@ class TransactionServiceIntegrationTest {
     }
 
     @Test
+    void fxClearingAccountMayBeDebitedBelowZero() {
+        accountRepository.save(new Account(UUID.randomUUID(), "fx-clearing-USD", "FX clearing USD",
+                "USD", 0L, AccountStatus.ACTIVE, null));
+        var request = new CreateTransactionRequest("fx-clearing-USD", "acct-a", 7_500L, "USD",
+                "clearing payout");
+
+        TransactionResponse response = transactionService.postTransaction(request, "key-clearing-negative");
+
+        assertThat(response.status()).isEqualTo("POSTED");
+        Account clearing = accountRepository.findByAccountRef("fx-clearing-USD").orElseThrow();
+        assertThat(clearing.getBalanceMinor()).isEqualTo(-7_500L);
+        Account credited = accountRepository.findByAccountRef("acct-a").orElseThrow();
+        assertThat(credited.getBalanceMinor()).isEqualTo(17_500L);
+    }
+
+    @Test
+    void ordinaryAccountStillCannotBeDebitedBelowZero() {
+        // Regression guard: the fx-clearing- bypass must not weaken the check for real accounts.
+        var request = new CreateTransactionRequest("acct-b", "acct-a", 5_001L, "USD", "one minor unit too much");
+
+        assertThatThrownBy(() -> transactionService.postTransaction(request, "key-ordinary-negative"))
+                .isInstanceOf(InsufficientFundsException.class);
+
+        Account b = accountRepository.findByAccountRef("acct-b").orElseThrow();
+        assertThat(b.getBalanceMinor()).isEqualTo(5_000L);
+    }
+
+    @Test
     void concurrentRequestsWithSameNewIdempotencyKeyResultInExactlyOnePost() throws InterruptedException {
         int threadCount = 8;
         var request = new CreateTransactionRequest("acct-a", "acct-b", 100L, "USD", "race test");

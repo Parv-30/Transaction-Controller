@@ -19,5 +19,9 @@ processor:
   base-url: ${PROCESSOR_BASE_URL:http://localhost:8081}
 fx:
   base-url: ${FX_SERVICE_URL:http://localhost:8083}
+  clearing-accounts:
+    USD: ${FX_CLEARING_ACCOUNT_USD:fx-clearing-USD}
+    EUR: ${FX_CLEARING_ACCOUNT_EUR:fx-clearing-EUR}
+    GBP: ${FX_CLEARING_ACCOUNT_GBP:fx-clearing-GBP}
 reconciliation:
   interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
