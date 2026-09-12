@@ -42,7 +42,7 @@ class SchemaMigrationIntegrationTest {
 
         assertThat(tables).containsExactlyInAnyOrder(
                 "accounts", "transactions", "entries", "outbox",
-                "reconciliation_runs", "reconciliation_findings", "flyway_schema_history"
+                "reconciliation_runs", "reconciliation_findings", "pending_fx_transfers", "flyway_schema_history"
         );
     }
 
