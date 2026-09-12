@@ -15,6 +15,8 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
 
     Optional<Account> findByAccountRef(String accountRef);
 
+    List<Account> findByAccountGroupId(UUID accountGroupId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM Account a WHERE a.id IN :ids ORDER BY a.id ASC")
     List<Account> lockAccountsForUpdate(@Param("ids") List<UUID> ids);

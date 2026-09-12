@@ -35,6 +35,9 @@ public class Account {
     @Column(nullable = false)
     private long version;
 
+    @Column(name = "account_group_id")
+    private UUID accountGroupId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -46,13 +49,14 @@ public class Account {
     }
 
     public Account(UUID id, String accountRef, String displayName, String currency,
-                   long balanceMinor, AccountStatus status) {
+                   long balanceMinor, AccountStatus status, UUID accountGroupId) {
         this.id = id;
         this.accountRef = accountRef;
         this.displayName = displayName;
         this.currency = currency;
         this.balanceMinor = balanceMinor;
         this.status = status;
+        this.accountGroupId = accountGroupId;
     }
 
     public UUID getId() { return id; }
@@ -62,6 +66,7 @@ public class Account {
     public long getBalanceMinor() { return balanceMinor; }
     public AccountStatus getStatus() { return status; }
     public long getVersion() { return version; }
+    public UUID getAccountGroupId() { return accountGroupId; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 

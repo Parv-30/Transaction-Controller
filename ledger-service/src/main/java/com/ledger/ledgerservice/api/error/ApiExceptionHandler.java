@@ -2,6 +2,7 @@ package com.ledger.ledgerservice.api.error;
 
 import com.ledger.ledgerservice.service.AccountNotActiveException;
 import com.ledger.ledgerservice.service.AccountNotFoundException;
+import com.ledger.ledgerservice.service.AccountRefAlreadyExistsException;
 import com.ledger.ledgerservice.service.IdempotencyConflictException;
 import com.ledger.ledgerservice.service.InsufficientFundsException;
 import org.springframework.http.HttpStatus;
@@ -32,5 +33,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(AccountNotActiveException.class)
     public ResponseEntity<Map<String, String>> handleAccountNotActive(AccountNotActiveException e) {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(AccountRefAlreadyExistsException.class)
+    public ResponseEntity<Map<String, String>> handleAccountRefAlreadyExists(AccountRefAlreadyExistsException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 }

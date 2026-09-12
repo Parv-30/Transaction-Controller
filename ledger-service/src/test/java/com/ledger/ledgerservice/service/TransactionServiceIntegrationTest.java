@@ -68,8 +68,8 @@ class TransactionServiceIntegrationTest {
         outboxRepository.deleteAll();
         transactionRepository.deleteAll();
         accountRepository.deleteAll();
-        accountRepository.save(new Account(UUID.randomUUID(), "acct-a", "A", "USD", 10_000L, AccountStatus.ACTIVE));
-        accountRepository.save(new Account(UUID.randomUUID(), "acct-b", "B", "USD", 5_000L, AccountStatus.ACTIVE));
+        accountRepository.save(new Account(UUID.randomUUID(), "acct-a", "A", "USD", 10_000L, AccountStatus.ACTIVE, null));
+        accountRepository.save(new Account(UUID.randomUUID(), "acct-b", "B", "USD", 5_000L, AccountStatus.ACTIVE, null));
     }
 
     @Test

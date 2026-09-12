@@ -56,8 +56,8 @@ class AccountRepositoryLockingIntegrationTest {
     void seedAccounts() {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.executeWithoutResult(status -> {
-            Account a = new Account(UUID.randomUUID(), "acct-a", "A", "USD", 10_000L, AccountStatus.ACTIVE);
-            Account b = new Account(UUID.randomUUID(), "acct-b", "B", "USD", 10_000L, AccountStatus.ACTIVE);
+            Account a = new Account(UUID.randomUUID(), "acct-a", "A", "USD", 10_000L, AccountStatus.ACTIVE, null);
+            Account b = new Account(UUID.randomUUID(), "acct-b", "B", "USD", 10_000L, AccountStatus.ACTIVE, null);
             accountRepository.save(a);
             accountRepository.save(b);
             accountAId = a.getId();
