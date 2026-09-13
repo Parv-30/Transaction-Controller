@@ -81,7 +81,7 @@ rm -f "$RESPONSE_FILE"
 
 echo "Waiting for ledger-service to become healthy again..."
 for i in $(seq 1 30); do
-  if curl -sf http://localhost:8080/actuator/health > /dev/null 2>&1; then
+  if curl -sf http://localhost:8090/actuator/health > /dev/null 2>&1; then
     break
   fi
   sleep 2
