@@ -67,12 +67,15 @@ services:
       DB_PASSWORD: ledger
       PROCESSOR_BASE_URL: http://transaction-processor:8081
       SERVER_PORT: "8090"
+      FX_SERVICE_URL: http://fx-service:8083
     ports:
       - "8090:8090"
     depends_on:
       ledger-postgres:
         condition: service_healthy
       toxiproxy:
+        condition: service_started
+      fx-service:
         condition: service_started
 
   transaction-processor:
@@ -104,6 +107,36 @@ services:
         condition: service_started
       toxiproxy:
         condition: service_started
+
+  fx-db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: fx_db
+      POSTGRES_USER: fx
+      POSTGRES_PASSWORD: fx
+    volumes:
+      - fx-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fx -d fx_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  fx-service:
+    build:
+      context: .
+      dockerfile: fx-service/Dockerfile
+    environment:
+      DB_HOST: fx-db
+      DB_PORT: "5432"
+      DB_NAME: fx_db
+      DB_USER: fx
+      DB_PASSWORD: fx
+    ports:
+      - "8083:8083"
+    depends_on:
+      fx-db:
+        condition: service_healthy
 
   holds-db:
     image: postgres:16.4
@@ -182,6 +215,7 @@ services:
     environment:
       LEDGER_SERVICE_URL: http://ledger-service:8090
       HOLDS_SERVICE_URL: http://holds-service:8082
+      FX_SERVICE_URL: http://fx-service:8083
       KEYCLOAK_ISSUER_URI: http://host.docker.internal:8180/realms/ledger
     ports:
       - "8080:8080"
@@ -189,6 +223,8 @@ services:
       ledger-service:
         condition: service_started
       holds-service:
+        condition: service_started
+      fx-service:
         condition: service_started
       keycloak:
         condition: service_healthy
@@ -198,3 +234,4 @@ volumes:
   processor-pgdata:
   debezium-offsets:
   holds-pgdata:
+  fx-pgdata:

@@ -49,6 +49,8 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
+bash "$(dirname "${BASH_SOURCE[0]}")/seed-clearing-accounts.sh"
+
 echo "Granting CDC privileges on outbox and creating the Debezium publication..."
 # ledger-postgres-init/01-debezium-user.sql deliberately only creates the debezium_replicator
 # role: Postgres initdb.d scripts run before ledger-service has ever connected and run its

@@ -28,3 +28,23 @@ spring:
           uri: ${HOLDS_SERVICE_URL:http://localhost:8082}
           predicates:
             - Path=/accounts/*/available-balance
+        - id: fx-rates
+          uri: ${FX_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/rates/**
+        - id: fx-conversions
+          uri: ${FX_SERVICE_URL:http://localhost:8083}
+          predicates:
+            - Path=/conversions/**
+        - id: ledger-accounts
+          uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
+          predicates:
+            - Path=/accounts/**
+        - id: ledger-wallets
+          uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
+          predicates:
+            - Path=/wallets/**
+        - id: ledger-transfers
+          uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
+          predicates:
+            - Path=/transfers/**

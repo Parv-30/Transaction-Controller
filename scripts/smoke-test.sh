@@ -116,7 +116,41 @@ if [ "$CAPTURE_HTTP_CODE" != "200" ] || ! echo "$CAPTURE_BODY" | grep -q '"statu
 fi
 
 echo ""
-echo "Smoke test complete: reconciliation is clean and the Holds flow (create + capture) works"
-echo "through the gateway."
+echo "Verifying gateway route disambiguation between Ledger Service (/accounts/**) and Holds"
+echo "Service (/accounts/*/available-balance) -- the ledger-accounts route added for V3 uses a"
+echo "superset pattern of the pre-existing holds-available-balance route, so route declaration"
+echo "order matters: if ledger-accounts were declared first, every available-balance request"
+echo "would be silently misrouted to Ledger Service (which has no such endpoint) instead of"
+echo "Holds Service. This checks both routes land on the correct backend."
+CREATE_ACCT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/accounts" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"accountRef":"smoke-route-check","currency":"USD"}')
+CREATE_ACCT_HTTP_CODE=$(echo "$CREATE_ACCT_RESPONSE" | tail -n1)
+CREATE_ACCT_BODY=$(echo "$CREATE_ACCT_RESPONSE" | head -n-1)
+echo "  POST /accounts -> ($CREATE_ACCT_HTTP_CODE) $CREATE_ACCT_BODY"
+if [ "$CREATE_ACCT_HTTP_CODE" != "201" ] && [ "$CREATE_ACCT_HTTP_CODE" != "409" ]; then
+  echo "Smoke test FAILED: expected HTTP 201 or 409 from Ledger Service creating an account"
+  echo "through the gateway's ledger-accounts route, got ($CREATE_ACCT_HTTP_CODE) $CREATE_ACCT_BODY"
+  exit 1
+fi
+
+AVAIL_BAL_RESPONSE=$(curl -s -w "\n%{http_code}" "$GATEWAY_URL/accounts/smoke-a/available-balance" \
+  -H "Authorization: Bearer $TOKEN")
+AVAIL_BAL_HTTP_CODE=$(echo "$AVAIL_BAL_RESPONSE" | tail -n1)
+AVAIL_BAL_BODY=$(echo "$AVAIL_BAL_RESPONSE" | head -n-1)
+echo "  GET /accounts/smoke-a/available-balance -> ($AVAIL_BAL_HTTP_CODE) $AVAIL_BAL_BODY"
+if [ "$AVAIL_BAL_HTTP_CODE" != "200" ] || ! echo "$AVAIL_BAL_BODY" | grep -q 'availableBalance\|balance'; then
+  echo "Smoke test FAILED: expected HTTP 200 with a balance body from Holds Service's"
+  echo "available-balance route, got ($AVAIL_BAL_HTTP_CODE) $AVAIL_BAL_BODY -- this likely means"
+  echo "route ordering is wrong and available-balance requests are being misrouted to Ledger"
+  echo "Service instead of Holds Service."
+  exit 1
+fi
+
+echo ""
+echo "Smoke test complete: reconciliation is clean, the Holds flow (create + capture) works"
+echo "through the gateway, and gateway route disambiguation between Ledger Service and Holds"
+echo "Service is correct."
 echo "Final reconciliation result: $RECON_RESPONSE"
 exit 0
