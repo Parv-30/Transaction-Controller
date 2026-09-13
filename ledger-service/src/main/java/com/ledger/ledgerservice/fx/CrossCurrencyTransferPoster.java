@@ -42,6 +42,20 @@ import java.util.UUID;
  * <em>after</em> the posting returns, so a crash between the two leaves the row behind the
  * ledger rather than ahead of it -- the direction the sweep can safely repair, because
  * re-running the step replays the transaction under the same deterministic key.
+ *
+ * <p><strong>{@code @Version} on {@link PendingFxTransfer}.</strong> Everything above explains why
+ * the underlying money movement can never be double-posted even when the sweep and an in-flight
+ * saga call the same step concurrently on the same row -- that safety comes entirely from
+ * {@code TransactionService}'s idempotency-key mechanism at the ledger-transaction level. It says
+ * nothing, though, about the {@link PendingFxTransfer} entity's own field updates: without a
+ * concurrency guard, two threads could both read the same row, both mutate it (e.g. both call
+ * {@code markLeg1Posted} then {@code save}), and the second {@code save} would silently overwrite
+ * the first with no error -- and {@code compensate}'s own {@code if (status != COMPENSATING) {...}}
+ * check-then-act is not atomic against the database, so two concurrent callers could both pass
+ * that check before either commits. {@code PendingFxTransfer}'s {@code @Version} field closes that
+ * gap: Hibernate now throws {@code ObjectOptimisticLockingFailureException} on the second of two
+ * racing {@code save()} calls on the same row, so a sweep-vs-in-flight-request race is detected
+ * and one side backs off cleanly instead of silently losing an update.
  */
 @Service
 public class CrossCurrencyTransferPoster {
@@ -95,7 +109,12 @@ public class CrossCurrencyTransferPoster {
         PendingFxTransfer transfer = pendingFxTransferRepository.findById(pendingTransferId).orElseThrow();
         if (transfer.getStatus() != PendingFxTransferStatus.COMPENSATING) {
             transfer.markCompensating();
-            pendingFxTransferRepository.save(transfer);
+            // save() returns the managed/merged instance with the DB-incremented @Version;
+            // the original `transfer` reference stays detached with its pre-save version, so
+            // it must be reassigned here. Otherwise the second save() below would send a
+            // stale version and spuriously fail with ObjectOptimisticLockingFailureException
+            // even with no real concurrent writer involved.
+            transfer = pendingFxTransferRepository.save(transfer);
         }
 
         String sourceCurrency = accountRepository.findByAccountRef(transfer.getSourceAccountRef())

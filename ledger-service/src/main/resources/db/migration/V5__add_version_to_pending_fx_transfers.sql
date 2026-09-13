@@ -1,0 +1,1 @@
+ALTER TABLE pending_fx_transfers ADD COLUMN version BIGINT NOT NULL DEFAULT 0;

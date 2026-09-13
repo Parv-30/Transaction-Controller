@@ -3,6 +3,7 @@ package com.ledger.ledgerservice.fx;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -40,6 +41,13 @@ import java.util.List;
  * <p>Non-goal, by design: a row that fails compensation repeatedly stays {@code COMPENSATING}
  * forever with no dead-letter path. One row's recovery failing must not block the sweep from
  * processing the rest of the batch, so failures are logged and the row is retried on the next run.
+ *
+ * <p>Because {@link PendingFxTransfer} now carries an {@code @Version} field, a row this sweep
+ * picks up as stuck can still turn out to be genuinely in-flight (e.g. its actual processing took
+ * longer than {@code stuck-threshold-ms} under load). If the sweep's {@code save()} loses that
+ * race to the in-flight caller's own {@code save()}, Hibernate throws
+ * {@code ObjectOptimisticLockingFailureException}. That is treated as an expected, benign outcome
+ * -- not a real failure -- and logged at INFO rather than WARN before moving on to the next row.
  */
 @Component
 public class FxTransferRecoverySweep {
@@ -73,6 +81,12 @@ public class FxTransferRecoverySweep {
                     case LEG1_POSTED -> {
                         try {
                             poster.postLeg2(transfer.getId());
+                        } catch (ObjectOptimisticLockingFailureException raceLost) {
+                            // Do not treat a lost optimistic-lock race as a genuine leg2 failure --
+                            // a concurrent caller already advanced this row, so compensating here
+                            // would be wrong. Rethrow to the outer catch, which logs it as the
+                            // expected benign outcome it is and moves on.
+                            throw raceLost;
                         } catch (Exception leg2Failure) {
                             log.warn("Sweep-driven leg2 retry failed for pending_fx_transfer {}; compensating",
                                     transfer.getId(), leg2Failure);
@@ -82,6 +96,16 @@ public class FxTransferRecoverySweep {
                     case COMPENSATING -> poster.compensate(transfer.getId());
                     default -> { /* not stuck-relevant, skip */ }
                 }
+            } catch (ObjectOptimisticLockingFailureException raceLost) {
+                // Expected, benign outcome now that PendingFxTransfer carries @Version: an
+                // in-flight HTTP-triggered saga (or another sweep pass) already advanced this
+                // exact row between our SELECT and our save(). Whoever won the race already
+                // moved the row forward correctly, so this is not a failure needing compensation
+                // or a retry -- just skip it and let the next scheduled run re-evaluate its
+                // (by-then-updated) status if it still looks stuck.
+                log.info("Skipped pending_fx_transfer {} in sweep: lost an optimistic-lock race " +
+                                "to a concurrent update (already handled by another caller).",
+                        transfer.getId());
             } catch (Exception e) {
                 // One row's recovery failing must not block the sweep from processing the
                 // rest -- log and move on. This row stays stuck and is retried on the next

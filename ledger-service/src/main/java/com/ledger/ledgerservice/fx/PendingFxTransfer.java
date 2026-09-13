@@ -47,6 +47,10 @@ public class PendingFxTransfer {
     @Column(name = "compensation_transaction_id")
     private UUID compensationTransactionId;
 
+    @Version
+    @Column(nullable = false)
+    private long version;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -83,6 +87,7 @@ public class PendingFxTransfer {
     public UUID getLeg1TransactionId() { return leg1TransactionId; }
     public UUID getLeg2TransactionId() { return leg2TransactionId; }
     public UUID getCompensationTransactionId() { return compensationTransactionId; }
+    public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
