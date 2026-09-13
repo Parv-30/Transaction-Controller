@@ -69,6 +69,73 @@ post_transaction() {
     -d "{\"debitAccountRef\":\"$debit_ref\",\"creditAccountRef\":\"$credit_ref\",\"amountMinor\":$amount,\"currency\":\"USD\",\"description\":\"chaos test\"}"
 }
 
+seed_account_with_currency() {
+  local account_ref="$1"
+  local balance_minor="$2"
+  local currency="$3"
+  docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -c \
+    "INSERT INTO accounts (id, account_ref, currency, balance_minor) VALUES (gen_random_uuid(), '$account_ref', '$currency', $balance_minor) ON CONFLICT (account_ref) DO UPDATE SET currency = '$currency', balance_minor = $balance_minor;" > /dev/null
+}
+
+post_cross_currency_transfer() {
+  local source_ref="$1"
+  local dest_ref="$2"
+  local amount="$3"
+  local idem_key="$4"
+  curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/transfers/cross-currency" \
+    -H "Authorization: Bearer $(get_chaos_suite_token)" \
+    -H "Content-Type: application/json" \
+    -d "{\"sourceAccountRef\":\"$source_ref\",\"destAccountRef\":\"$dest_ref\",\"sourceAmountMinor\":$amount,\"idempotencyKey\":\"$idem_key\"}"
+}
+
+get_pending_fx_transfer_status() {
+  local idem_key="$1"
+  docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -t -c \
+    "SELECT status FROM pending_fx_transfers WHERE idempotency_key = '$idem_key';" | tr -d ' \r\n'
+}
+
+fx_transfer_row_count() {
+  local idem_key="$1"
+  docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -t -c \
+    "SELECT COUNT(*) FROM pending_fx_transfers WHERE idempotency_key = '$idem_key';" | tr -d ' \r\n'
+}
+
+# Polls up to timeout_seconds for either a terminal status (COMPLETED/COMPENSATED) or
+# confirmation that no row was ever persisted for this idempotency key at all -- both are valid
+# outcomes of a crash landing at different points in the saga (see 06_fx_saga_crash_mid_leg.sh
+# for why "no row" is legitimate: a crash before the PendingFxTransfer insert commits leaves
+# nothing for the recovery sweep to act on, since nothing was ever recorded as started).
+# Echoes one of: COMPLETED, COMPENSATED, NO_ROW. Returns non-zero on timeout with neither.
+wait_for_fx_transfer_terminal_status() {
+  local idem_key="$1"
+  local timeout_seconds="${2:-90}"
+  local elapsed=0
+  local status=""
+  local row_count=""
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    row_count=$(fx_transfer_row_count "$idem_key")
+    if [ "$row_count" = "0" ]; then
+      # Give any in-flight insert a little more time to land before concluding "no row" --
+      # avoids a false NO_ROW read on the very first poll, right after the crash.
+      if [ "$elapsed" -ge 6 ]; then
+        echo "NO_ROW"
+        return 0
+      fi
+    else
+      status=$(get_pending_fx_transfer_status "$idem_key")
+      if [ "$status" = "COMPLETED" ] || [ "$status" = "COMPENSATED" ]; then
+        echo "$status"
+        return 0
+      fi
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+  echo "TIMEOUT waiting for pending_fx_transfers terminal status (last saw: $status, row_count=$row_count)" >&2
+  echo "$status"
+  return 1
+}
+
 get_account_balance() {
   local account_ref="$1"
   docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -t -c \
