@@ -180,7 +180,7 @@ platform's internal netting accounts — see "Known limitations").
 curl -X POST http://localhost:8080/accounts \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"accountRef":"alice-usd","currency":"USD","accountGroupId":"alice-wallet"}'
+  -d '{"accountRef":"alice-usd","currency":"USD"}'
 ```
 
 `GET /wallets/{groupId}/accounts` — lists every account belonging to a wallet
