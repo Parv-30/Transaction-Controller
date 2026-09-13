@@ -23,5 +23,8 @@ fx:
     USD: ${FX_CLEARING_ACCOUNT_USD:fx-clearing-USD}
     EUR: ${FX_CLEARING_ACCOUNT_EUR:fx-clearing-EUR}
     GBP: ${FX_CLEARING_ACCOUNT_GBP:fx-clearing-GBP}
+  transfer-sweep:
+    interval-ms: ${FX_TRANSFER_SWEEP_INTERVAL_MS:15000}
+    stuck-threshold-ms: ${FX_TRANSFER_STUCK_THRESHOLD_MS:30000}
 reconciliation:
   interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
