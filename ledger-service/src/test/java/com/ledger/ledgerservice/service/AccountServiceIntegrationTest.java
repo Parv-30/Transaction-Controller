@@ -37,6 +37,9 @@ class AccountServiceIntegrationTest {
     @Autowired
     AccountService accountService;
 
+    @Autowired
+    com.ledger.ledgerservice.repository.AccountRepository accountRepository;
+
     @Test
     void createAccountGeneratesAGroupIdWhenNoneIsGiven() {
         var response = accountService.createAccount(
@@ -61,6 +64,40 @@ class AccountServiceIntegrationTest {
         assertThatThrownBy(() -> accountService.createAccount(
                 new CreateAccountRequest("wallet-test-dup", "EUR", null)))
                 .isInstanceOf(AccountRefAlreadyExistsException.class);
+    }
+
+    @Test
+    void createAccountRefusesTheReservedFxClearingPrefix() {
+        // TransactionPoster lets any account whose ref starts with "fx-clearing-" be debited
+        // below zero. If a client could claim such a ref through this customer-facing endpoint,
+        // it could mint money by debiting its own clearing account without limit.
+        assertThatThrownBy(() -> accountService.createAccount(
+                new CreateAccountRequest("fx-clearing-evil", "USD", null)))
+                .isInstanceOf(ReservedAccountRefException.class);
+
+        // ...and nothing was persisted, so the ref cannot be used afterwards either.
+        assertThat(accountRepository.findByAccountRef("fx-clearing-evil")).isEmpty();
+    }
+
+    @Test
+    void createAccountRefusesTheReservedPrefixEvenForARealClearingCurrency() {
+        // The guard is a prefix rule, not an allowlist of "suspicious" names: even the exact
+        // refs the FX saga itself uses are unavailable to clients through this endpoint.
+        assertThatThrownBy(() -> accountService.createAccount(
+                new CreateAccountRequest("fx-clearing-USD", "USD", null)))
+                .isInstanceOf(ReservedAccountRefException.class);
+    }
+
+    @Test
+    void createAccountAllowsRefsThatMerelyContainTheReservedWordElsewhere() {
+        // Regression guard: the check is startsWith, case-sensitive -- it must not over-reject
+        // ordinary customer wallet refs.
+        assertThat(accountService.createAccount(
+                new CreateAccountRequest("wallet-fx-clearing-lookalike", "USD", null)).accountRef())
+                .isEqualTo("wallet-fx-clearing-lookalike");
+        assertThat(accountService.createAccount(
+                new CreateAccountRequest("FX-CLEARING-upper", "USD", null)).accountRef())
+                .isEqualTo("FX-CLEARING-upper");
     }
 
     @Test

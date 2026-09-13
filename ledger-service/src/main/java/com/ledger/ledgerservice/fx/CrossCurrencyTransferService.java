@@ -2,6 +2,8 @@ package com.ledger.ledgerservice.fx;
 
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.service.AccountNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -16,6 +18,8 @@ import java.util.UUID;
  */
 @Service
 public class CrossCurrencyTransferService {
+
+    private static final Logger log = LoggerFactory.getLogger(CrossCurrencyTransferService.class);
 
     private final FxServiceClient fxServiceClient;
     private final PendingFxTransferRepository pendingFxTransferRepository;
@@ -35,7 +39,7 @@ public class CrossCurrencyTransferService {
     public PendingFxTransferResponse transfer(CreateCrossCurrencyTransferRequest request) {
         var existing = pendingFxTransferRepository.findByIdempotencyKey(request.idempotencyKey());
         if (existing.isPresent()) {
-            return toResponse(existing.get());
+            return toResponse(existing.get(), null);
         }
 
         // Currency lookup here (for the quote request) duplicates the lookup
@@ -55,15 +59,21 @@ public class CrossCurrencyTransferService {
                 request.sourceAmountMinor(), quote.rateUsed(), destAmountMinor);
         pendingFxTransferRepository.save(transfer);
 
+        String failureMessage = null;
         try {
             poster.postLeg1(transfer.getId());
             poster.postLeg2(transfer.getId());
         } catch (Exception legFailure) {
+            // Money-movement failure path: without this the only trace of why a transfer
+            // compensated is the row's status, which tells an operator nothing about the cause.
+            log.warn("Cross-currency transfer {} failed while posting a leg; compensating",
+                    transfer.getId(), legFailure);
+            failureMessage = legFailure.getMessage();
             poster.compensate(transfer.getId());
         }
 
         PendingFxTransfer finalState = pendingFxTransferRepository.findById(transfer.getId()).orElseThrow();
-        return toResponse(finalState);
+        return toResponse(finalState, failureMessage);
     }
 
     private String resolveCurrency(String accountRef) {
@@ -72,9 +82,17 @@ public class CrossCurrencyTransferService {
                 .getCurrency();
     }
 
-    private PendingFxTransferResponse toResponse(PendingFxTransfer transfer) {
+    /**
+     * @param failureMessage the leg failure that triggered compensation, or {@code null}. It is
+     *                       surfaced only when the transfer actually ended up compensated -- a
+     *                       {@code COMPLETED} transfer had nothing go wrong, so its
+     *                       {@code errorMessage} stays null.
+     */
+    private PendingFxTransferResponse toResponse(PendingFxTransfer transfer, String failureMessage) {
+        String errorMessage =
+                transfer.getStatus() == PendingFxTransferStatus.COMPLETED ? null : failureMessage;
         return new PendingFxTransferResponse(transfer.getId(), transfer.getStatus().name(),
                 transfer.getSourceAccountRef(), transfer.getDestAccountRef(),
-                transfer.getSourceAmountMinor(), transfer.getDestAmountMinor(), null);
+                transfer.getSourceAmountMinor(), transfer.getDestAmountMinor(), errorMessage);
     }
 }

@@ -20,7 +20,24 @@ public class AccountService {
         this.accountRepository = accountRepository;
     }
 
+    /**
+     * Creates a customer wallet account.
+     *
+     * <p>Account refs under {@link TransactionPoster#FX_CLEARING_ACCOUNT_REF_PREFIX} are refused:
+     * {@code TransactionPoster} grants accounts with that prefix an unlimited-overdraft
+     * privilege (they are the platform's internal netting accounts and are expected to run
+     * negative). Since this endpoint is customer-facing and the ref is entirely client-chosen,
+     * without this guard any authenticated caller could create {@code fx-clearing-<anything>}
+     * and then mint money by debiting it arbitrarily far below zero -- a transfer that would
+     * still satisfy the zero-sum double-entry invariant and so would not surface as a
+     * reconciliation anomaly. The prefix match is case-sensitive, matching the bypass check.
+     */
     public AccountResponse createAccount(CreateAccountRequest request) {
+        if (request.accountRef() != null
+                && request.accountRef().startsWith(TransactionPoster.FX_CLEARING_ACCOUNT_REF_PREFIX)) {
+            throw new ReservedAccountRefException(request.accountRef());
+        }
+
         if (accountRepository.findByAccountRef(request.accountRef()).isPresent()) {
             throw new AccountRefAlreadyExistsException(request.accountRef());
         }

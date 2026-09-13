@@ -5,6 +5,7 @@ import com.ledger.ledgerservice.service.AccountNotFoundException;
 import com.ledger.ledgerservice.service.AccountRefAlreadyExistsException;
 import com.ledger.ledgerservice.service.IdempotencyConflictException;
 import com.ledger.ledgerservice.service.InsufficientFundsException;
+import com.ledger.ledgerservice.service.ReservedAccountRefException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -38,5 +39,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(AccountRefAlreadyExistsException.class)
     public ResponseEntity<Map<String, String>> handleAccountRefAlreadyExists(AccountRefAlreadyExistsException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(ReservedAccountRefException.class)
+    public ResponseEntity<Map<String, String>> handleReservedAccountRef(ReservedAccountRefException e) {
+        // 400, not 409: nothing already exists to conflict with -- the request itself is disallowed.
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
     }
 }

@@ -26,6 +26,14 @@ import java.util.UUID;
 @Service
 public class TransactionPoster {
 
+    /**
+     * Account-ref prefix marking the platform's internal FX clearing accounts, which are allowed
+     * to be debited below zero (see the insufficient-funds check below). Because that is a
+     * genuine privilege, {@link AccountService} rejects client-supplied account refs carrying
+     * this prefix -- the two must stay in lockstep, hence the shared constant.
+     */
+    public static final String FX_CLEARING_ACCOUNT_REF_PREFIX = "fx-clearing-";
+
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final EntryRepository entryRepository;
@@ -102,7 +110,10 @@ public class TransactionPoster {
         // accounts: leg 2 of a cross-currency transfer debits the destination-currency clearing
         // account, which is expected to run negative by convention. This bypass is narrowly
         // scoped to the "fx-clearing-" ref prefix; ordinary accounts keep the check unchanged.
-        boolean debitAccountAllowsNegativeBalance = debitAccount.getAccountRef().startsWith("fx-clearing-");
+        // AccountService refuses to create accounts under this prefix, so it cannot be claimed
+        // by a client via POST /accounts.
+        boolean debitAccountAllowsNegativeBalance =
+                debitAccount.getAccountRef().startsWith(FX_CLEARING_ACCOUNT_REF_PREFIX);
         if (!debitAccountAllowsNegativeBalance && debitAccount.getBalanceMinor() < request.amountMinor()) {
             throw new InsufficientFundsException(debitAccount.getAccountRef());
         }

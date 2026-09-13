@@ -111,6 +111,8 @@ class CrossCurrencyTransferServiceIntegrationTest {
 
         assertThat(response.status()).isEqualTo(PendingFxTransferStatus.COMPLETED.name());
         assertThat(response.destAmountMinor()).isEqualTo(9_200L);
+        // Nothing went wrong, so no error is reported.
+        assertThat(response.errorMessage()).isNull();
 
         Account source = accountRepository.findByAccountRef("fx-saga-source-usd").orElseThrow();
         Account dest = accountRepository.findByAccountRef("fx-saga-dest-eur").orElseThrow();
@@ -160,6 +162,8 @@ class CrossCurrencyTransferServiceIntegrationTest {
         var response = crossCurrencyTransferService.transfer(request);
 
         assertThat(response.status()).isEqualTo(PendingFxTransferStatus.COMPENSATED.name());
+        // The failure that forced compensation must reach the caller, not be swallowed.
+        assertThat(response.errorMessage()).isNotBlank();
 
         Account source = accountRepository.findByAccountRef("fx-saga-source-usd").orElseThrow();
         // The debit-then-compensate round trip should net to zero change on the source account.
