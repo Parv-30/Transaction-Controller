@@ -79,10 +79,18 @@ class FxTransferRecoverySweepIntegrationTest {
                 100_000L, AccountStatus.ACTIVE, null));
         accountRepository.save(new Account(UUID.randomUUID(), "fx-sweep-dest", null, "EUR",
                 0L, AccountStatus.ACTIVE, null));
-        accountRepository.save(new Account(UUID.randomUUID(), "fx-clearing-USD", null, "USD",
-                0L, AccountStatus.ACTIVE, null));
-        accountRepository.save(new Account(UUID.randomUUID(), "fx-clearing-EUR", null, "EUR",
-                0L, AccountStatus.ACTIVE, null));
+        // fx-clearing-USD/EUR are fixed account refs seeded by the V4 migration (which now runs
+        // against every Testcontainers Postgres instance, including this one), so they may
+        // already exist -- only seed them if they don't, matching the guard used by the other
+        // @Test in this class.
+        if (accountRepository.findByAccountRef("fx-clearing-USD").isEmpty()) {
+            accountRepository.save(new Account(UUID.randomUUID(), "fx-clearing-USD", null, "USD",
+                    0L, AccountStatus.ACTIVE, null));
+        }
+        if (accountRepository.findByAccountRef("fx-clearing-EUR").isEmpty()) {
+            accountRepository.save(new Account(UUID.randomUUID(), "fx-clearing-EUR", null, "EUR",
+                    0L, AccountStatus.ACTIVE, null));
+        }
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), "sweep-test-1",
                 UUID.randomUUID(), "fx-sweep-source", "fx-sweep-dest", 10_000L,
