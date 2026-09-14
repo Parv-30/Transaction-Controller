@@ -6,6 +6,7 @@ import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.service.TransactionService;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -92,6 +93,9 @@ public class CrossCurrencyTransferPoster {
 
     public void postLeg2(UUID pendingTransferId) {
         PendingFxTransfer transfer = pendingFxTransferRepository.findById(pendingTransferId).orElseThrow();
+        if (Instant.now().isAfter(transfer.getExpiresAt())) {
+            throw new FxQuoteExpiredException(pendingTransferId);
+        }
         String destCurrency = accountRepository.findByAccountRef(transfer.getDestAccountRef())
                 .orElseThrow().getCurrency();
         String clearingAccountRef = clearingAccounts.get(destCurrency);
