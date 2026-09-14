@@ -3,6 +3,7 @@ package com.ledger.holdsservice.api;
 import com.ledger.holdsservice.api.dto.AvailableBalanceResponse;
 import com.ledger.holdsservice.api.dto.CaptureHoldRequest;
 import com.ledger.holdsservice.api.dto.CreateHoldRequest;
+import com.ledger.holdsservice.api.dto.HeldBalanceResponse;
 import com.ledger.holdsservice.api.dto.HoldResponse;
 import com.ledger.holdsservice.service.HoldService;
 import org.springframework.http.HttpStatus;
@@ -53,5 +54,10 @@ public class HoldController {
     @GetMapping("/accounts/{accountRef}/available-balance")
     public ResponseEntity<AvailableBalanceResponse> availableBalance(@PathVariable("accountRef") String accountRef) {
         return ResponseEntity.ok(holdService.getAvailableBalance(accountRef));
+    }
+
+    @GetMapping("/accounts/{accountRef}/held-balance")
+    public ResponseEntity<HeldBalanceResponse> heldBalance(@PathVariable("accountRef") String accountRef) {
+        return ResponseEntity.ok(holdService.getHeldBalance(accountRef));
     }
 }
