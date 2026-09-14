@@ -84,7 +84,7 @@ class FxTransferRecoverySweepOptimisticLockRaceIntegrationTest {
         // throws ObjectOptimisticLockingFailureException.
         PendingFxTransfer raced = new PendingFxTransfer(UUID.randomUUID(), "sweep-race-1",
                 UUID.randomUUID(), "race-source", "race-dest", 10_000L,
-                new BigDecimal("0.92000000"), 9_200L);
+                new BigDecimal("0.92000000"), 9_200L, Instant.now().plusSeconds(60));
         pendingFxTransferRepository.save(raced);
         backdate(raced.getId());
 
@@ -92,7 +92,7 @@ class FxTransferRecoverySweepOptimisticLockRaceIntegrationTest {
         // block the rest of the batch from being processed.
         PendingFxTransfer ordinary = new PendingFxTransfer(UUID.randomUUID(), "sweep-race-2",
                 UUID.randomUUID(), "ordinary-source", "ordinary-dest", 5_000L,
-                new BigDecimal("0.92000000"), 4_600L);
+                new BigDecimal("0.92000000"), 4_600L, Instant.now().plusSeconds(60));
         pendingFxTransferRepository.save(ordinary);
         backdate(ordinary.getId());
 

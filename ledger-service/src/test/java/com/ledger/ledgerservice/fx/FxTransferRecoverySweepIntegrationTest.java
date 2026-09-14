@@ -98,7 +98,7 @@ class FxTransferRecoverySweepIntegrationTest {
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), "sweep-test-1",
                 UUID.randomUUID(), "fx-sweep-source", "fx-sweep-dest", 10_000L,
-                new BigDecimal("0.92000000"), 9_200L);
+                new BigDecimal("0.92000000"), 9_200L, Instant.now().plusSeconds(60));
         pendingFxTransferRepository.save(transfer);
         poster.postLeg1(transfer.getId());
 
@@ -129,7 +129,7 @@ class FxTransferRecoverySweepIntegrationTest {
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), "sweep-test-2",
                 UUID.randomUUID(), "fx-sweep-comp-source", "fx-sweep-comp-dest", 5_000L,
-                new BigDecimal("0.92000000"), 4_600L);
+                new BigDecimal("0.92000000"), 4_600L, Instant.now().plusSeconds(60));
         pendingFxTransferRepository.save(transfer);
         poster.postLeg1(transfer.getId());
         // Simulate a crash inside compensate() itself: mark COMPENSATING but never finish,

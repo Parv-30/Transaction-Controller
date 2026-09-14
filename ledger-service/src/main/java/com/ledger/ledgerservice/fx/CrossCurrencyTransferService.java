@@ -56,7 +56,7 @@ public class CrossCurrencyTransferService {
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), request.idempotencyKey(),
                 quote.quoteId(), request.sourceAccountRef(), request.destAccountRef(),
-                request.sourceAmountMinor(), quote.rateUsed(), destAmountMinor);
+                request.sourceAmountMinor(), quote.rateUsed(), destAmountMinor, quote.expiresAt());
         pendingFxTransferRepository.save(transfer);
 
         String failureMessage = null;
