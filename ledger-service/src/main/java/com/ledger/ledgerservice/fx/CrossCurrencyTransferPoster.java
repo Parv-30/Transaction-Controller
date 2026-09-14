@@ -4,6 +4,7 @@ import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.service.TransactionService;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -65,15 +66,18 @@ public class CrossCurrencyTransferPoster {
     private final AccountRepository accountRepository;
     private final PendingFxTransferRepository pendingFxTransferRepository;
     private final FxClearingAccountsProperties clearingAccounts;
+    private final MeterRegistry meterRegistry;
 
     public CrossCurrencyTransferPoster(TransactionService transactionService,
                                        AccountRepository accountRepository,
                                        PendingFxTransferRepository pendingFxTransferRepository,
-                                       FxClearingAccountsProperties clearingAccounts) {
+                                       FxClearingAccountsProperties clearingAccounts,
+                                       MeterRegistry meterRegistry) {
         this.transactionService = transactionService;
         this.accountRepository = accountRepository;
         this.pendingFxTransferRepository = pendingFxTransferRepository;
         this.clearingAccounts = clearingAccounts;
+        this.meterRegistry = meterRegistry;
     }
 
     public void postLeg1(UUID pendingTransferId) {
@@ -110,6 +114,7 @@ public class CrossCurrencyTransferPoster {
     }
 
     public void compensate(UUID pendingTransferId) {
+        meterRegistry.counter("ledger.fx.saga.compensation").increment();
         PendingFxTransfer transfer = pendingFxTransferRepository.findById(pendingTransferId).orElseThrow();
         if (transfer.getStatus() != PendingFxTransferStatus.COMPENSATING) {
             transfer.markCompensating();

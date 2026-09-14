@@ -92,6 +92,8 @@ class ReconciliationServiceIntegrationTest {
     private ReconciliationFindingRepository findingRepository;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     @BeforeEach
     void cleanState() {
@@ -112,6 +114,15 @@ class ReconciliationServiceIntegrationTest {
         assertThat(run.getEntriesImbalanceCount()).isZero();
         assertThat(run.getOutboxMissingCount()).isZero();
         assertThat(run.getOutboxStuckCount()).isZero();
+    }
+
+    @Test
+    void aCleanReconciliationRunSetsAllMismatchGaugesToZero() {
+        reconciliationService.runReconciliation();
+
+        assertThat(meterRegistry.find("ledger.reconciliation.entries_imbalance").gauge().value()).isEqualTo(0.0);
+        assertThat(meterRegistry.find("ledger.reconciliation.outbox_missing").gauge().value()).isEqualTo(0.0);
+        assertThat(meterRegistry.find("ledger.reconciliation.outbox_stuck").gauge().value()).isEqualTo(0.0);
     }
 
     @Test

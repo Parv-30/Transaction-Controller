@@ -194,6 +194,10 @@ class CrossCurrencyTransferServiceIntegrationTest {
 
         Account destJpy = accountRepository.findByAccountRef("fx-saga-dest-jpy").orElseThrow();
         assertThat(destJpy.getBalanceMinor()).isEqualTo(0L);
+
+        var counter = meterRegistry.find("ledger.fx.saga.compensation").counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
     }
 
     @Test

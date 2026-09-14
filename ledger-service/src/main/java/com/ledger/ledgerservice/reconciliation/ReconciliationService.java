@@ -1,6 +1,7 @@
 package com.ledger.ledgerservice.reconciliation;
 
 import com.ledger.ledgerservice.domain.ReconciliationRun;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Orchestrates a single reconciliation run: creates the run row, runs the read-only DB checks
@@ -44,12 +46,20 @@ public class ReconciliationService {
     private final ReconciliationFindingsWriter writer;
     private final ProcessorReconciliationClient processorClient;
 
+    private final AtomicLong entriesImbalanceGauge = new AtomicLong(0);
+    private final AtomicLong outboxMissingGauge = new AtomicLong(0);
+    private final AtomicLong outboxStuckGauge = new AtomicLong(0);
+
     public ReconciliationService(ReconciliationChecks checks,
                                   ReconciliationFindingsWriter writer,
-                                  ProcessorReconciliationClient processorClient) {
+                                  ProcessorReconciliationClient processorClient,
+                                  MeterRegistry meterRegistry) {
         this.checks = checks;
         this.writer = writer;
         this.processorClient = processorClient;
+        meterRegistry.gauge("ledger.reconciliation.entries_imbalance", entriesImbalanceGauge);
+        meterRegistry.gauge("ledger.reconciliation.outbox_missing", outboxMissingGauge);
+        meterRegistry.gauge("ledger.reconciliation.outbox_stuck", outboxStuckGauge);
     }
 
     public ReconciliationRun runReconciliation() {
@@ -60,6 +70,10 @@ public class ReconciliationService {
             ReconciliationChecks.CheckResults results = checks.runDbChecks();
 
             List<ReconciliationChecks.StaleOutboxRow> stuck = crossCheckStaleOutboxRows(results.staleOutboxRows());
+
+            entriesImbalanceGauge.set(results.imbalancedTransactionIds().size());
+            outboxMissingGauge.set(results.missingOutboxTransactionIds().size());
+            outboxStuckGauge.set(stuck.size());
 
             return writer.completeRun(runId, results.transactionsChecked(), results.imbalancedTransactionIds(),
                     results.missingOutboxTransactionIds(), stuck);

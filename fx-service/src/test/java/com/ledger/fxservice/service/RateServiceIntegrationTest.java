@@ -48,6 +48,9 @@ class RateServiceIntegrationTest {
     @Autowired
     FxQuoteRepository fxQuoteRepository;
 
+    @Autowired
+    io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
     @Test
     void getLatestRateReturnsFreshRateWhenRecentlySynced() {
         fxRateRepository.save(new FxRate(UUID.randomUUID(), "USD", "EUR",
@@ -92,5 +95,15 @@ class RateServiceIntegrationTest {
     void lockQuoteThrowsForAnUnknownPair() {
         assertThatThrownBy(() -> rateService.lockQuote("XXX", "YYY", 10_000L))
                 .isInstanceOf(RateNotAvailableException.class);
+    }
+
+    @Test
+    void lockQuoteFailureForAnUnknownPairIncrementsTheFailureCounter() {
+        assertThatThrownBy(() -> rateService.lockQuote("XXX", "YYY", 10_000L))
+                .isInstanceOf(RateNotAvailableException.class);
+
+        var counter = meterRegistry.find("fx.quote.failure").counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
     }
 }
