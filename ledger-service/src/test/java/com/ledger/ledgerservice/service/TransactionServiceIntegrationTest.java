@@ -41,11 +41,29 @@ class TransactionServiceIntegrationTest {
             .withUsername("ledger")
             .withPassword("ledger");
 
+    static com.sun.net.httpserver.HttpServer stubHoldsService;
+    static final java.util.concurrent.atomic.AtomicLong stubbedHeldBalance = new java.util.concurrent.atomic.AtomicLong(0L);
+
     @DynamicPropertySource
-    static void registerDatasource(DynamicPropertyRegistry registry) {
+    static void registerDatasource(DynamicPropertyRegistry registry) throws Exception {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+
+        stubHoldsService = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress(0), 0);
+        stubHoldsService.createContext("/", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String accountRef = path.substring("/accounts/".length(), path.length() - "/held-balance".length());
+            String body = "{\"accountRef\":\"" + accountRef + "\",\"heldBalanceMinor\":" + stubbedHeldBalance.get() + "}";
+            byte[] response = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        stubHoldsService.start();
+        registry.add("holds.base-url", () -> "http://localhost:" + stubHoldsService.getAddress().getPort());
+        registry.add("holds.held-balance-timeout-ms", () -> "2000");
     }
 
     @Autowired
@@ -188,5 +206,49 @@ class TransactionServiceIntegrationTest {
 
         Account debit = accountRepository.findByAccountRef("acct-a").orElseThrow();
         assertThat(debit.getBalanceMinor()).isEqualTo(9_900L); // debited exactly once, not 8x
+    }
+
+    @Test
+    void aHeldAmountReducesAvailableFundsEvenThoughPostedBalanceWouldCoverIt() {
+        // acct-a has 10,000 posted (seeded in @BeforeEach) with 9,500 held, leaving only 500
+        // truly available.
+        stubbedHeldBalance.set(9_500L);
+
+        assertThatThrownBy(() -> transactionService.postTransaction(
+                new CreateTransactionRequest("acct-a", "acct-b", 1_000L, "USD", "should fail: held funds"),
+                "held-funds-test-1"))
+                .isInstanceOf(InsufficientFundsException.class);
+
+        stubbedHeldBalance.set(0L);
+    }
+
+    @Test
+    void aTransferWithinTheHeldAdjustedAvailableBalanceSucceeds() {
+        stubbedHeldBalance.set(9_500L);
+
+        var response = transactionService.postTransaction(
+                new CreateTransactionRequest("acct-a", "acct-b", 500L, "USD", "should succeed: within available"),
+                "held-funds-test-2");
+
+        assertThat(response.status()).isEqualTo("POSTED");
+        stubbedHeldBalance.set(0L);
+    }
+
+    @Test
+    void fxClearingAccountsSkipTheHeldBalanceCheckEntirely() {
+        // Even if the stub were to report a huge held balance, fx-clearing- accounts must never
+        // call out to Holds Service at all -- set an impossibly large held amount to prove the
+        // check is skipped, not merely satisfied.
+        stubbedHeldBalance.set(Long.MAX_VALUE / 2);
+
+        accountRepository.save(new Account(UUID.randomUUID(), "fx-clearing-USD", "FX clearing USD",
+                "USD", 0L, AccountStatus.ACTIVE, null));
+
+        var response = transactionService.postTransaction(
+                new CreateTransactionRequest("fx-clearing-USD", "acct-a", 500L, "USD", "clearing account bypass"),
+                "held-funds-test-3");
+
+        assertThat(response.status()).isEqualTo("POSTED");
+        stubbedHeldBalance.set(0L);
     }
 }

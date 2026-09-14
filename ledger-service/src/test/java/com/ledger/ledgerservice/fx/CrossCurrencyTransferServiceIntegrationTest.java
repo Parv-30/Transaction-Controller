@@ -6,6 +6,7 @@ import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.OutboxRepository;
 import com.ledger.ledgerservice.repository.TransactionRepository;
+import com.ledger.ledgerservice.testsupport.StubHoldsService;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,12 +37,15 @@ class CrossCurrencyTransferServiceIntegrationTest {
             .withPassword("ledger");
 
     static HttpServer stubFxService;
+    static HttpServer stubHoldsService;
 
     @DynamicPropertySource
     static void registerProps(DynamicPropertyRegistry registry) throws Exception {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+
+        stubHoldsService = StubHoldsService.startAlwaysZero(registry);
 
         stubFxService = HttpServer.create(new InetSocketAddress(0), 0);
         // Pair-agnostic on purpose: every /conversions/quote call (USD->EUR and USD->JPY alike)

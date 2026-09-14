@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
 import com.ledger.ledgerservice.domain.*;
+import com.ledger.ledgerservice.holds.HoldsServiceClient;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.OutboxRepository;
@@ -39,17 +40,20 @@ public class TransactionPoster {
     private final EntryRepository entryRepository;
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final HoldsServiceClient holdsServiceClient;
 
     public TransactionPoster(AccountRepository accountRepository,
                               TransactionRepository transactionRepository,
                               EntryRepository entryRepository,
                               OutboxRepository outboxRepository,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              HoldsServiceClient holdsServiceClient) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.entryRepository = entryRepository;
         this.outboxRepository = outboxRepository;
         this.objectMapper = objectMapper;
+        this.holdsServiceClient = holdsServiceClient;
     }
 
     /**
@@ -114,8 +118,12 @@ public class TransactionPoster {
         // by a client via POST /accounts.
         boolean debitAccountAllowsNegativeBalance =
                 debitAccount.getAccountRef().startsWith(FX_CLEARING_ACCOUNT_REF_PREFIX);
-        if (!debitAccountAllowsNegativeBalance && debitAccount.getBalanceMinor() < request.amountMinor()) {
-            throw new InsufficientFundsException(debitAccount.getAccountRef());
+        if (!debitAccountAllowsNegativeBalance) {
+            long heldBalanceMinor = holdsServiceClient.getHeldBalance(debitAccount.getAccountRef());
+            long availableBalanceMinor = debitAccount.getBalanceMinor() - heldBalanceMinor;
+            if (request.amountMinor() > availableBalanceMinor) {
+                throw new InsufficientFundsException(debitAccount.getAccountRef());
+            }
         }
 
         UUID transactionId = UUID.randomUUID();
