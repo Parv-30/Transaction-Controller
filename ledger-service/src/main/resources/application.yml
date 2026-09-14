@@ -31,3 +31,12 @@ reconciliation:
 holds:
   base-url: ${HOLDS_SERVICE_URL:http://localhost:8082}
   held-balance-timeout-ms: ${HOLDS_HELD_BALANCE_TIMEOUT_MS:2000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health
+  metrics:
+    tags:
+      application: ${spring.application.name}

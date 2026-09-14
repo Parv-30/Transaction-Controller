@@ -48,3 +48,12 @@ spring:
           uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
           predicates:
             - Path=/transfers/**
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health
+  metrics:
+    tags:
+      application: ${spring.application.name}
