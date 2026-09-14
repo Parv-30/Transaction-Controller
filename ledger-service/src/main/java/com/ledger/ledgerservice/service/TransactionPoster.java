@@ -177,6 +177,7 @@ public class TransactionPoster {
         if (!existing.getRequestPayloadHash().equals(requestHash)) {
             throw new IdempotencyConflictException(existing.getIdempotencyKey());
         }
+        meterRegistry.counter("ledger.idempotency.replay").increment();
         return new TransactionResponse(existing.getId(), existing.getStatus().name(),
                 request.debitAccountRef(), request.creditAccountRef(),
                 request.amountMinor(), request.currency(), true);

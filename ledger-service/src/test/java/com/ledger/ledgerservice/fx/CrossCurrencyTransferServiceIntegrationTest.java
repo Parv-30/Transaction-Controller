@@ -87,6 +87,9 @@ class CrossCurrencyTransferServiceIntegrationTest {
     @Autowired
     CrossCurrencyTransferPoster poster;
 
+    @Autowired
+    io.micrometer.core.instrument.MeterRegistry meterRegistry;
+
     /**
      * The @Container Postgres is static and shared across every @Test in this class, so balance
      * mutations would otherwise leak between tests. Truncate in FK-safe child-to-parent order,
@@ -142,6 +145,9 @@ class CrossCurrencyTransferServiceIntegrationTest {
         var request = new CreateCrossCurrencyTransferRequest(
                 "fx-saga-source-usd", "fx-saga-dest-eur", 5_000L, "cc-transfer-idem-1");
 
+        double before = meterRegistry.find("ledger.fx.transfer.idempotency.replay").counter() == null
+                ? 0.0 : meterRegistry.find("ledger.fx.transfer.idempotency.replay").counter().count();
+
         var first = crossCurrencyTransferService.transfer(request);
         var second = crossCurrencyTransferService.transfer(request);
 
@@ -151,6 +157,9 @@ class CrossCurrencyTransferServiceIntegrationTest {
         // Only ONE 5,000 debit should have happened, not two -- this is the idempotency
         // proof, not just a status-field check.
         assertThat(source.getBalanceMinor()).isEqualTo(95_000L);
+
+        double after = meterRegistry.find("ledger.fx.transfer.idempotency.replay").counter().count();
+        assertThat(after).isEqualTo(before + 1.0);
     }
 
     @Test

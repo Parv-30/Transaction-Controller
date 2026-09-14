@@ -278,4 +278,18 @@ class TransactionServiceIntegrationTest {
         assertThat(counter).isNotNull();
         assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
     }
+
+    @Test
+    void retryingTheSameIdempotencyKeyIncrementsTheReplayCounter() {
+        var request = new CreateTransactionRequest("acct-a", "acct-b", 100L, "USD", "replay metrics test");
+        transactionService.postTransaction(request, "metrics-replay-test-1");
+        double before = meterRegistry.find("ledger.idempotency.replay").counter() == null
+                ? 0.0 : meterRegistry.find("ledger.idempotency.replay").counter().count();
+
+        var replayResponse = transactionService.postTransaction(request, "metrics-replay-test-1");
+
+        assertThat(replayResponse.replay()).isTrue();
+        double after = meterRegistry.find("ledger.idempotency.replay").counter().count();
+        assertThat(after).isEqualTo(before + 1.0);
+    }
 }
