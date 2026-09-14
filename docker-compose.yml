@@ -68,6 +68,7 @@ services:
       PROCESSOR_BASE_URL: http://transaction-processor:8081
       SERVER_PORT: "8090"
       FX_SERVICE_URL: http://fx-service:8083
+      HOLDS_SERVICE_URL: http://holds-service:8082
     ports:
       - "8090:8090"
     depends_on:
