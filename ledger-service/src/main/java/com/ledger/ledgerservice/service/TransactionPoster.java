@@ -41,19 +41,22 @@ public class TransactionPoster {
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
     private final HoldsServiceClient holdsServiceClient;
+    private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     public TransactionPoster(AccountRepository accountRepository,
                               TransactionRepository transactionRepository,
                               EntryRepository entryRepository,
                               OutboxRepository outboxRepository,
                               ObjectMapper objectMapper,
-                              HoldsServiceClient holdsServiceClient) {
+                              HoldsServiceClient holdsServiceClient,
+                              io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.entryRepository = entryRepository;
         this.outboxRepository = outboxRepository;
         this.objectMapper = objectMapper;
         this.holdsServiceClient = holdsServiceClient;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -90,6 +93,16 @@ public class TransactionPoster {
     @Transactional
     public TransactionResponse postInTransaction(CreateTransactionRequest request,
                                                    String idempotencyKey, String requestHash) {
+        var sample = io.micrometer.core.instrument.Timer.start(meterRegistry);
+        try {
+            return doPostInTransaction(request, idempotencyKey, requestHash);
+        } finally {
+            sample.stop(meterRegistry.timer("ledger.transaction.latency"));
+        }
+    }
+
+    private TransactionResponse doPostInTransaction(CreateTransactionRequest request,
+                                                      String idempotencyKey, String requestHash) {
         var existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             return replayOrConflict(existing.get(), requestHash, request);

@@ -76,6 +76,8 @@ class TransactionServiceIntegrationTest {
     private OutboxRepository outboxRepository;
     @Autowired
     private TransactionRepository transactionRepository;
+    @Autowired
+    io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     @BeforeEach
     void seedAccounts() {
@@ -250,5 +252,30 @@ class TransactionServiceIntegrationTest {
 
         assertThat(response.status()).isEqualTo("POSTED");
         stubbedHeldBalance.set(0L);
+    }
+
+    @Test
+    void postingATransactionRecordsATransactionLatencyTimer() {
+        transactionService.postTransaction(
+                new CreateTransactionRequest("acct-a", "acct-b", 100L, "USD", "metrics test"),
+                "metrics-latency-test-1");
+
+        var timer = meterRegistry.find("ledger.transaction.latency").timer();
+        assertThat(timer).isNotNull();
+        assertThat(timer.count()).isGreaterThanOrEqualTo(1L);
+    }
+
+    @Test
+    void aFailedTransactionIncrementsTheFailedTransactionsCounterTaggedByExceptionType() {
+        assertThatThrownBy(() -> transactionService.postTransaction(
+                new CreateTransactionRequest("acct-a", "nonexistent-account-xyz", 100L, "USD", "should fail"),
+                "metrics-failure-test-1"))
+                .isInstanceOf(AccountNotFoundException.class);
+
+        var counter = meterRegistry.find("ledger.transaction.failed")
+                .tag("exception", "AccountNotFoundException")
+                .counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
     }
 }
