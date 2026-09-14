@@ -3,6 +3,7 @@ package com.ledger.txprocessor.messaging;
 import com.ledger.txprocessor.domain.ProcessedEvent;
 import com.ledger.txprocessor.domain.ProcessedEventStatus;
 import com.ledger.txprocessor.repository.ProcessedEventRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
@@ -62,6 +63,8 @@ class OutboxEventPublishConsumeIntegrationTest {
     private OutboxConfirmHandler outboxConfirmHandler;
     @Autowired
     private RabbitTemplate rabbitTemplate;
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @BeforeEach
     void cleanUp() {
@@ -171,6 +174,10 @@ class OutboxEventPublishConsumeIntegrationTest {
             assertThat(updated.getStatus()).isEqualTo(ProcessedEventStatus.CONSUMED);
             assertThat(updated.getDeliveryCount()).isEqualTo(2);
         });
+
+        var counter = meterRegistry.find("processor.rabbitmq.redelivery").counter();
+        assertThat(counter).isNotNull();
+        assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
     }
 
     /**

@@ -2,6 +2,7 @@ package com.ledger.holdsservice.messaging;
 
 import com.ledger.holdsservice.domain.AccountBalanceCache;
 import com.ledger.holdsservice.repository.AccountBalanceCacheRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.MessageBuilder;
@@ -50,6 +51,8 @@ class LedgerTransactionPostedConsumerIntegrationTest {
     private RabbitTemplate rabbitTemplate;
     @Autowired
     private AccountBalanceCacheRepository accountBalanceCacheRepository;
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @BeforeEach
     void cleanUp() {
@@ -78,5 +81,41 @@ class LedgerTransactionPostedConsumerIntegrationTest {
             assertThat(debitCache.getPostedBalanceMinor()).isEqualTo(5000L);
             assertThat(creditCache.getPostedBalanceMinor()).isEqualTo(15000L);
         });
+    }
+
+    @Test
+    void duplicateDeliveryOfSameOutboxEventIdIsIgnoredNotReprocessed() {
+        String outboxEventId = UUID.randomUUID().toString();
+        String payload = "{\"debitAccountRef\":\"acct-dup-a\",\"creditAccountRef\":\"acct-dup-b\"," +
+                "\"debitAccountBalanceAfter\":7000,\"creditAccountBalanceAfter\":9000}";
+
+        var message = MessageBuilder.withBody(payload.getBytes(StandardCharsets.UTF_8))
+                .setHeader(MessagingConstants.HEADER_OUTBOX_EVENT_ID, outboxEventId)
+                .setHeader(MessagingConstants.HEADER_AGGREGATE_ID, UUID.randomUUID().toString())
+                .setHeader(MessagingConstants.HEADER_EVENT_TYPE, "TRANSACTION_POSTED")
+                .setContentType("application/json")
+                .build();
+
+        rabbitTemplate.send(MessagingConstants.LEDGER_EXCHANGE,
+                MessagingConstants.TRANSACTION_POSTED_ROUTING_KEY, message);
+
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            AccountBalanceCache debitCache = accountBalanceCacheRepository.findById("acct-dup-a").orElseThrow();
+            assertThat(debitCache.getPostedBalanceMinor()).isEqualTo(7000L);
+        });
+
+        // Simulate a redelivery: resend the same message (same outboxEventId) again.
+        rabbitTemplate.send(MessagingConstants.LEDGER_EXCHANGE,
+                MessagingConstants.TRANSACTION_POSTED_ROUTING_KEY, message);
+
+        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+            var counter = meterRegistry.find("holds.rabbitmq.redelivery").counter();
+            assertThat(counter).isNotNull();
+            assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
+        });
+
+        // Balance must not be reprocessed/reapplied by the duplicate delivery.
+        AccountBalanceCache debitCache = accountBalanceCacheRepository.findById("acct-dup-a").orElseThrow();
+        assertThat(debitCache.getPostedBalanceMinor()).isEqualTo(7000L);
     }
 }

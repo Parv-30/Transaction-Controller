@@ -1,6 +1,7 @@
 package com.ledger.txprocessor.messaging;
 
 import com.ledger.txprocessor.repository.ProcessedEventRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,9 +19,11 @@ import java.util.UUID;
 public class DedupGateService {
 
     private final ProcessedEventRepository processedEventRepository;
+    private final MeterRegistry meterRegistry;
 
-    public DedupGateService(ProcessedEventRepository processedEventRepository) {
+    public DedupGateService(ProcessedEventRepository processedEventRepository, MeterRegistry meterRegistry) {
         this.processedEventRepository = processedEventRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -45,6 +48,7 @@ public class DedupGateService {
         if (rowsTransitioned == 0) {
             // Row was already CONSUMED — this is a duplicate/redelivered message.
             processedEventRepository.incrementDeliveryCount(outboxEventId, Instant.now());
+            meterRegistry.counter("processor.rabbitmq.redelivery").increment();
         }
 
         // rowsTransitioned == 1: this call won the dedup gate. Business effect for V1 is
