@@ -1,6 +1,8 @@
 package com.ledger.ledgerservice.service;
 
 import com.ledger.ledgerservice.api.dto.CreateAccountRequest;
+import com.ledger.ledgerservice.domain.Account;
+import com.ledger.ledgerservice.domain.AccountStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -86,6 +88,23 @@ class AccountServiceIntegrationTest {
         assertThatThrownBy(() -> accountService.createAccount(
                 new CreateAccountRequest("fx-clearing-USD", "USD", null)))
                 .isInstanceOf(ReservedAccountRefException.class);
+    }
+
+    @Test
+    void creatingAnAccountWithTheExternalClearingPrefixIsRejected() {
+        // Mirrors createAccountRefusesTheReservedFxClearingPrefix: TransactionPoster grants the
+        // "external-clearing-" prefix the same unlimited-overdraft privilege (Task 2), so this
+        // customer-facing endpoint must refuse it too.
+        assertThatThrownBy(() -> accountService.createAccount(
+                new CreateAccountRequest("external-clearing-USD", "USD", null)))
+                .isInstanceOf(ReservedAccountRefException.class);
+    }
+
+    @Test
+    void externalClearingUsdAccountExistsFromMigrationAndAllowsUnlimitedOverdraft() {
+        Account seeded = accountRepository.findByAccountRef("external-clearing-USD").orElseThrow();
+        assertThat(seeded.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+        assertThat(seeded.getCurrency()).isEqualTo("USD");
     }
 
     @Test
