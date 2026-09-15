@@ -284,6 +284,8 @@ services:
         condition: service_started
       fx-service:
         condition: service_started
+      gateway-simulator:
+        condition: service_started
 
   grafana:
     image: grafana/grafana:11.3.1
