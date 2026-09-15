@@ -56,11 +56,23 @@
         {"type": "password", "value": "bob-password", "temporary": false}
       ],
       "realmRoles": ["user"]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@example.com",
+      "firstName": "Admin",
+      "lastName": "Demo",
+      "credentials": [
+        {"type": "password", "value": "admin-password", "temporary": false}
+      ],
+      "realmRoles": ["user", "admin"]
     }
   ],
   "roles": {
     "realm": [
-      {"name": "user"}
+      {"name": "user"},
+      {"name": "admin"}
     ]
   }
 }
