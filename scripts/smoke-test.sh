@@ -149,8 +149,128 @@ if [ "$AVAIL_BAL_HTTP_CODE" != "200" ] || ! echo "$AVAIL_BAL_BODY" | grep -q 'av
 fi
 
 echo ""
+echo "Verifying the Gateway Simulator deposit-then-withdrawal round trip..."
+echo "Seeding a fresh account for the deposit/withdrawal flow..."
+docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -c \
+  "INSERT INTO accounts (id, account_ref, balance_minor) VALUES (gen_random_uuid(), 'smoke-gwsim', 0) ON CONFLICT (account_ref) DO UPDATE SET balance_minor = 0;"
+
+echo "Simulating an external deposit of 2500 into smoke-gwsim..."
+DEPOSIT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/simulator/deposits" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"accountRef":"smoke-gwsim","amountMinor":2500,"currency":"USD"}')
+DEPOSIT_HTTP_CODE=$(echo "$DEPOSIT_RESPONSE" | tail -n1)
+DEPOSIT_BODY=$(echo "$DEPOSIT_RESPONSE" | head -n-1)
+echo "  POST /simulator/deposits -> ($DEPOSIT_HTTP_CODE) $DEPOSIT_BODY"
+if [ "$DEPOSIT_HTTP_CODE" != "201" ]; then
+  echo "Smoke test FAILED: expected HTTP 201 simulating a deposit, got ($DEPOSIT_HTTP_CODE) $DEPOSIT_BODY"
+  exit 1
+fi
+
+EXTERNAL_REF=$(echo "$DEPOSIT_BODY" | grep -o '"externalReference":"[^"]*"' | cut -d'"' -f4)
+echo "External reference: $EXTERNAL_REF"
+
+echo "Polling GET /external-deposits/{ref} until CREDITED..."
+DEPOSIT_STATUS=""
+for i in $(seq 1 15); do
+  DEPOSIT_STATUS_RESPONSE=$(curl -sf "$GATEWAY_URL/external-deposits/$EXTERNAL_REF" \
+    -H "Authorization: Bearer $TOKEN")
+  echo "  [attempt $i] $DEPOSIT_STATUS_RESPONSE"
+  if echo "$DEPOSIT_STATUS_RESPONSE" | grep -q '"status":"CREDITED"'; then
+    DEPOSIT_STATUS="CREDITED"
+    break
+  fi
+  sleep 2
+done
+
+if [ "$DEPOSIT_STATUS" != "CREDITED" ]; then
+  echo "Smoke test FAILED: deposit never reached CREDITED status within the timeout."
+  exit 1
+fi
+
+DEPOSIT_BALANCE=$(docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -t -c \
+  "SELECT balance_minor FROM accounts WHERE account_ref = 'smoke-gwsim';" | tr -d ' \r\n')
+[ "$DEPOSIT_BALANCE" = "2500" ] || { echo "Smoke test FAILED: expected balance 2500 after deposit, got $DEPOSIT_BALANCE"; exit 1; }
+echo "Deposit credited; smoke-gwsim balance is now $DEPOSIT_BALANCE."
+
+echo ""
+echo "Posting a WITHDRAWAL_EXTERNAL transaction of 1000 from smoke-gwsim..."
+WITHDRAWAL_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/transactions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: smoke-withdrawal-$(date +%s)" \
+  -d '{"debitAccountRef":"smoke-gwsim","creditAccountRef":"external-clearing-USD","amountMinor":1000,"currency":"USD","description":"smoke withdrawal","transactionType":"WITHDRAWAL_EXTERNAL"}')
+WITHDRAWAL_HTTP_CODE=$(echo "$WITHDRAWAL_RESPONSE" | tail -n1)
+WITHDRAWAL_BODY=$(echo "$WITHDRAWAL_RESPONSE" | head -n-1)
+echo "  POST /transactions (WITHDRAWAL_EXTERNAL) -> ($WITHDRAWAL_HTTP_CODE) $WITHDRAWAL_BODY"
+if [ "$WITHDRAWAL_HTTP_CODE" != "201" ]; then
+  echo "Smoke test FAILED: expected HTTP 201 posting the withdrawal transaction, got"
+  echo "($WITHDRAWAL_HTTP_CODE) $WITHDRAWAL_BODY"
+  exit 1
+fi
+
+WITHDRAWAL_TXN_ID=$(echo "$WITHDRAWAL_BODY" | grep -o '"transactionId":"[^"]*"' | cut -d'"' -f4)
+echo "Withdrawal source transaction ID: $WITHDRAWAL_TXN_ID"
+
+WITHDRAWAL_DEBIT_BALANCE=$(docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -t -c \
+  "SELECT balance_minor FROM accounts WHERE account_ref = 'smoke-gwsim';" | tr -d ' \r\n')
+[ "$WITHDRAWAL_DEBIT_BALANCE" = "1500" ] || { echo "Smoke test FAILED: expected balance 1500 immediately after withdrawal debit, got $WITHDRAWAL_DEBIT_BALANCE"; exit 1; }
+
+echo "Polling gateway-sim-db directly for the external_withdrawals row to reach SUBMITTED"
+echo "(querying the DB directly rather than adding a read-by-transaction-id endpoint, matching"
+echo "how chaos scenario 4 already reads outbox/processed_events directly via psql)..."
+WITHDRAWAL_ID=""
+WITHDRAWAL_STATUS=""
+for i in $(seq 1 20); do
+  WITHDRAWAL_ROW=$(docker compose exec -T gateway-sim-db psql -U gatewaysim -d gateway_sim_db -t -A -F'|' -c \
+    "SELECT id, status FROM external_withdrawals WHERE source_transaction_id = '$WITHDRAWAL_TXN_ID';" | tr -d '\r')
+  WITHDRAWAL_ID=$(echo "$WITHDRAWAL_ROW" | cut -d'|' -f1)
+  WITHDRAWAL_STATUS=$(echo "$WITHDRAWAL_ROW" | cut -d'|' -f2)
+  echo "  [attempt $i] id=$WITHDRAWAL_ID status=$WITHDRAWAL_STATUS"
+  [ "$WITHDRAWAL_STATUS" = "SUBMITTED" ] && break
+  sleep 2
+done
+
+if [ "$WITHDRAWAL_STATUS" != "SUBMITTED" ]; then
+  echo "Smoke test FAILED: withdrawal never reached SUBMITTED status, last seen: $WITHDRAWAL_STATUS"
+  exit 1
+fi
+
+echo "Confirming the withdrawal via the gateway with outcome FAILED (should trigger a reversal)..."
+CONFIRM_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/simulator/withdrawals/$WITHDRAWAL_ID/confirm" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"outcome":"FAILED"}')
+CONFIRM_HTTP_CODE=$(echo "$CONFIRM_RESPONSE" | tail -n1)
+CONFIRM_BODY=$(echo "$CONFIRM_RESPONSE" | head -n-1)
+echo "  POST /simulator/withdrawals/$WITHDRAWAL_ID/confirm -> ($CONFIRM_HTTP_CODE) $CONFIRM_BODY"
+if [ "$CONFIRM_HTTP_CODE" != "200" ]; then
+  echo "Smoke test FAILED: expected HTTP 200 confirming the withdrawal as FAILED, got"
+  echo "($CONFIRM_HTTP_CODE) $CONFIRM_BODY"
+  exit 1
+fi
+
+echo "Polling smoke-gwsim's balance until the reversal restores it to 2500..."
+FINAL_BALANCE=""
+for i in $(seq 1 15); do
+  FINAL_BALANCE=$(docker compose exec -T ledger-postgres psql -U ledger -d ledger_db -t -c \
+    "SELECT balance_minor FROM accounts WHERE account_ref = 'smoke-gwsim';" | tr -d ' \r\n')
+  echo "  [attempt $i] balance=$FINAL_BALANCE"
+  [ "$FINAL_BALANCE" = "2500" ] && break
+  sleep 2
+done
+
+if [ "$FINAL_BALANCE" != "2500" ]; then
+  echo "Smoke test FAILED: expected balance restored to 2500 after the withdrawal reversal, got $FINAL_BALANCE"
+  exit 1
+fi
+
+echo "Gateway Simulator deposit-then-withdrawal round trip verified: deposit credited, withdrawal"
+echo "debited and reversed correctly on FAILED confirmation."
+
+echo ""
 echo "Smoke test complete: reconciliation is clean, the Holds flow (create + capture) works"
-echo "through the gateway, and gateway route disambiguation between Ledger Service and Holds"
-echo "Service is correct."
+echo "through the gateway, gateway route disambiguation between Ledger Service and Holds"
+echo "Service is correct, and the Gateway Simulator deposit/withdrawal round trip is correct."
 echo "Final reconciliation result: $RECON_RESPONSE"
 exit 0
