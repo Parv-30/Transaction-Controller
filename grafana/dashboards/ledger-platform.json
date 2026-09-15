@@ -78,6 +78,11 @@
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "expr": "rate(holds_rabbitmq_redelivery_total[5m])",
           "legendFormat": "holds-service"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(gateway_sim_rabbitmq_redelivery_total[5m])",
+          "legendFormat": "gateway-simulator"
         }
       ]
     },
@@ -135,6 +140,35 @@
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "expr": "rate(ledger_fx_quote_failure_total[5m])",
           "legendFormat": "ledger-service (client-side, incl. network failures)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Gateway Simulator",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(gateway_sim_webhook_duplicate_total[5m])",
+          "legendFormat": "webhook duplicates"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(gateway_sim_deposit_rejected_total[5m])",
+          "legendFormat": "deposit rejections"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(gateway_sim_withdrawal_timeout_total[5m])",
+          "legendFormat": "withdrawal timeouts"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(gateway_sim_withdrawal_reversal_total[5m])",
+          "legendFormat": "withdrawal reversals"
         }
       ]
     }
