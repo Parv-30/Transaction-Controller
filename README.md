@@ -255,8 +255,12 @@ currency, for use by a caller composing its own transfer logic.
   introduces is a cross-service coupling: Ledger Service's write availability for
   `POST /transactions` now depends on Holds Service being reachable, and the failure mode is
   deliberately fail-closed — if Holds Service can't be reached, the transaction is rejected
-  rather than risking a silent overdraw. `GET /accounts/{accountRef}/available-balance`
-  remains available for clients that want to pre-check before attempting a transfer.
+  rather than risking a silent overdraw. As a secondary effect, the held-balance check runs
+  while `SELECT ... FOR UPDATE` row locks are held on both accounts; sustained Holds Service
+  slowness (not just outages) will increase lock contention on hot accounts under load,
+  though a bounded timeout (`holds.held-balance-timeout-ms`) caps the worst-case lock duration.
+  `GET /accounts/{accountRef}/available-balance` remains available for clients that want to
+  pre-check before attempting a transfer.
 - **Auth scope**: Keycloak in V2 covers the client-credentials grant (machine clients) and
   the password grant (demo users `alice`/`bob`) only. There is no browser login /
   authorization-code flow and no user self-registration.
