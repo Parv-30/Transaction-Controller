@@ -11,7 +11,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 @SpringBootTest
@@ -65,5 +68,24 @@ class SchemaMigrationIntegrationTest {
                                 'DEBIT', 500, 'USD')
                         """)
         ).hasMessageContaining("do not sum to zero");
+    }
+
+    @Test
+    void transactionsHasReversalOfTransactionIdWithPartialUniqueIndex() {
+        UUID original = UUID.randomUUID();
+        UUID reversalA = UUID.randomUUID();
+        UUID reversalB = UUID.randomUUID();
+
+        jdbcTemplate.update(
+                "INSERT INTO transactions (id, idempotency_key, status, transaction_type, request_payload_hash, created_at) " +
+                        "VALUES (?, 'idem-original', 'POSTED', 'TRANSFER', repeat('a', 64), now())", original);
+        jdbcTemplate.update(
+                "INSERT INTO transactions (id, idempotency_key, status, transaction_type, request_payload_hash, created_at, reversal_of_transaction_id) " +
+                        "VALUES (?, 'idem-reversal-a', 'POSTED', 'REVERSAL', repeat('a', 64), now(), ?)", reversalA, original);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO transactions (id, idempotency_key, status, transaction_type, request_payload_hash, created_at, reversal_of_transaction_id) " +
+                        "VALUES (?, 'idem-reversal-b', 'POSTED', 'REVERSAL', repeat('a', 64), now(), ?)", reversalB, original))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 }
