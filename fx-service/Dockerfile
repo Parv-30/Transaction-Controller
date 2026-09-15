@@ -6,6 +6,7 @@ COPY transaction-processor/pom.xml transaction-processor/pom.xml
 COPY holds-service/pom.xml holds-service/pom.xml
 COPY api-gateway/pom.xml api-gateway/pom.xml
 COPY fx-service/pom.xml fx-service/pom.xml
+COPY gateway-simulator/pom.xml gateway-simulator/pom.xml
 RUN mvn -q -pl fx-service -am dependency:go-offline
 COPY fx-service fx-service
 RUN mvn -q -pl fx-service -am package -DskipTests

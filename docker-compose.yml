@@ -139,6 +139,38 @@ services:
       fx-db:
         condition: service_healthy
 
+  gateway-sim-db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: gateway_sim_db
+      POSTGRES_USER: gatewaysim
+      POSTGRES_PASSWORD: gatewaysim
+    volumes:
+      - gateway-sim-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gatewaysim -d gateway_sim_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway-simulator:
+    build:
+      context: .
+      dockerfile: gateway-simulator/Dockerfile
+    environment:
+      DB_HOST: gateway-sim-db
+      DB_PORT: "5432"
+      DB_NAME: gateway_sim_db
+      DB_USER: gatewaysim
+      DB_PASSWORD: gatewaysim
+      RABBITMQ_HOST: rabbitmq
+      LEDGER_SERVICE_URL: http://ledger-service:8090
+    ports:
+      - "8084:8084"
+    depends_on:
+      gateway-sim-db:
+        condition: service_healthy
+
   holds-db:
     image: postgres:16.4
     environment:
@@ -217,6 +249,7 @@ services:
       LEDGER_SERVICE_URL: http://ledger-service:8090
       HOLDS_SERVICE_URL: http://holds-service:8082
       FX_SERVICE_URL: http://fx-service:8083
+      GATEWAY_SIMULATOR_URL: http://gateway-simulator:8084
       KEYCLOAK_ISSUER_URI: http://host.docker.internal:8180/realms/ledger
     ports:
       - "8080:8080"
@@ -268,3 +301,4 @@ volumes:
   debezium-offsets:
   holds-pgdata:
   fx-pgdata:
+  gateway-sim-pgdata:
