@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -42,6 +43,13 @@ public class HoldController {
     @GetMapping("/holds/{id}")
     public ResponseEntity<HoldResponse> get(@PathVariable("id") UUID id) {
         return ResponseEntity.ok(holdService.getHold(id));
+    }
+
+    @GetMapping("/holds")
+    public ResponseEntity<List<HoldResponse>> list(
+            @RequestParam(value = "accountRef", required = false) String accountRef,
+            @RequestParam(value = "status", required = false) String status) {
+        return ResponseEntity.ok(holdService.listHolds(accountRef, status));
     }
 
     @PostMapping("/holds/{id}/capture")
