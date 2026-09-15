@@ -7,6 +7,7 @@ import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
 import com.ledger.ledgerservice.service.IdempotencyConflictException;
 import com.ledger.ledgerservice.service.InsufficientFundsException;
 import com.ledger.ledgerservice.service.ReservedAccountRefException;
+import com.ledger.ledgerservice.service.TransactionNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -19,6 +20,11 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(AccountNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleNotFound(AccountNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(TransactionNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleTransactionNotFound(TransactionNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
     }
 

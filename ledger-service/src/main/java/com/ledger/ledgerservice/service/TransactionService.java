@@ -1,14 +1,25 @@
 package com.ledger.ledgerservice.service;
 
 import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
+import com.ledger.ledgerservice.api.dto.EntryResponse;
+import com.ledger.ledgerservice.api.dto.TransactionDetailResponse;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
+import com.ledger.ledgerservice.api.dto.TransactionSummaryResponse;
+import com.ledger.ledgerservice.domain.Direction;
+import com.ledger.ledgerservice.domain.Entry;
 import com.ledger.ledgerservice.domain.Transaction;
 import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
+import com.ledger.ledgerservice.repository.AccountRepository;
+import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.TransactionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 
 @Service
 public class TransactionService {
@@ -17,15 +28,21 @@ public class TransactionService {
     private final IdempotencyHasher idempotencyHasher;
     private final TransactionPoster transactionPoster;
     private final MeterRegistry meterRegistry;
+    private final EntryRepository entryRepository;
+    private final AccountRepository accountRepository;
 
     public TransactionService(TransactionRepository transactionRepository,
                                IdempotencyHasher idempotencyHasher,
                                TransactionPoster transactionPoster,
-                               MeterRegistry meterRegistry) {
+                               MeterRegistry meterRegistry,
+                               EntryRepository entryRepository,
+                               AccountRepository accountRepository) {
         this.transactionRepository = transactionRepository;
         this.idempotencyHasher = idempotencyHasher;
         this.transactionPoster = transactionPoster;
         this.meterRegistry = meterRegistry;
+        this.entryRepository = entryRepository;
+        this.accountRepository = accountRepository;
     }
 
     /**
@@ -66,5 +83,49 @@ public class TransactionService {
                     "exception", genuineFailure.getClass().getSimpleName()).increment();
             throw genuineFailure;
         }
+    }
+
+    public List<TransactionSummaryResponse> listTransactions(String accountRefFilter, String statusFilter,
+                                                                Instant since, Instant until) {
+        List<Transaction> transactions;
+        if (accountRefFilter != null) {
+            transactions = transactionRepository.findByAccountRef(accountRefFilter);
+        } else {
+            transactions = transactionRepository.findAll();
+        }
+        return transactions.stream()
+                .filter(t -> statusFilter == null || t.getStatus().name().equals(statusFilter))
+                .filter(t -> since == null || !t.getCreatedAt().isBefore(since))
+                .filter(t -> until == null || !t.getCreatedAt().isAfter(until))
+                .map(this::toSummary)
+                .toList();
+    }
+
+    public TransactionDetailResponse getTransaction(UUID transactionId) {
+        Transaction transaction = transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new TransactionNotFoundException(transactionId));
+        List<Entry> entries = entryRepository.findByTransactionId(transactionId);
+        List<EntryResponse> entryResponses = entries.stream().map(this::toEntryResponse).toList();
+        return new TransactionDetailResponse(transaction.getId(), transaction.getStatus().name(),
+                transaction.getTransactionType(), transaction.getDescription(), transaction.getCreatedAt(),
+                transaction.getReversalOfTransactionId(), entryResponses);
+    }
+
+    private TransactionSummaryResponse toSummary(Transaction transaction) {
+        List<Entry> entries = entryRepository.findByTransactionId(transaction.getId());
+        Entry debitEntry = entries.stream().filter(e -> e.getDirection() == Direction.DEBIT).findFirst().orElseThrow();
+        Entry creditEntry = entries.stream().filter(e -> e.getDirection() == Direction.CREDIT).findFirst().orElseThrow();
+        String debitAccountRef = accountRepository.findById(debitEntry.getAccountId()).orElseThrow().getAccountRef();
+        String creditAccountRef = accountRepository.findById(creditEntry.getAccountId()).orElseThrow().getAccountRef();
+        return new TransactionSummaryResponse(transaction.getId(), transaction.getStatus().name(),
+                transaction.getTransactionType(), debitAccountRef, creditAccountRef,
+                debitEntry.getAmountMinor(), debitEntry.getCurrency(), transaction.getDescription(),
+                transaction.getCreatedAt(), transaction.getReversalOfTransactionId());
+    }
+
+    private EntryResponse toEntryResponse(Entry entry) {
+        String accountRef = accountRepository.findById(entry.getAccountId()).orElseThrow().getAccountRef();
+        return new EntryResponse(entry.getAccountId(), accountRef, entry.getDirection().name(),
+                entry.getAmountMinor(), entry.getCurrency());
     }
 }

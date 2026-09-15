@@ -2,6 +2,9 @@ package com.ledger.ledgerservice.service;
 
 import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
+import com.ledger.ledgerservice.api.dto.TransactionDetailResponse;
+import com.ledger.ledgerservice.api.dto.TransactionSummaryResponse;
+import com.ledger.ledgerservice.api.dto.EntryResponse;
 import com.ledger.ledgerservice.domain.Account;
 import com.ledger.ledgerservice.domain.AccountStatus;
 import com.ledger.ledgerservice.domain.Transaction;
@@ -20,6 +23,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -332,5 +336,79 @@ class TransactionServiceIntegrationTest {
 
         Transaction saved = transactionRepository.findById(response.transactionId()).orElseThrow();
         assertThat(saved.getTransactionType()).isEqualTo("WITHDRAWAL_EXTERNAL");
+    }
+
+    @Test
+    void listTransactionsWithNoFiltersReturnsAllTransactions() {
+        transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 100L, "USD", "list test"), "list-test-key-1");
+
+        List<TransactionSummaryResponse> results = transactionService.listTransactions(null, null, null, null);
+
+        assertThat(results).extracting(TransactionSummaryResponse::debitAccountRef).contains("acct-a");
+    }
+
+    @Test
+    void listTransactionsFiltersByAccountRefOnEitherSide() {
+        TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 200L, "USD", "filter test"), "filter-test-key-1");
+
+        List<TransactionSummaryResponse> debitSideResults =
+                transactionService.listTransactions("acct-a", null, null, null);
+        List<TransactionSummaryResponse> creditSideResults =
+                transactionService.listTransactions("acct-b", null, null, null);
+
+        assertThat(debitSideResults).extracting(TransactionSummaryResponse::transactionId)
+                .contains(posted.transactionId());
+        assertThat(creditSideResults).extracting(TransactionSummaryResponse::transactionId)
+                .contains(posted.transactionId());
+    }
+
+    @Test
+    void listTransactionsFiltersByStatus() {
+        transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 50L, "USD", "status filter test"), "status-filter-key-1");
+
+        List<TransactionSummaryResponse> postedResults = transactionService.listTransactions(null, "POSTED", null, null);
+        List<TransactionSummaryResponse> failedResults = transactionService.listTransactions(null, "FAILED", null, null);
+
+        assertThat(postedResults).isNotEmpty();
+        assertThat(failedResults).isEmpty();
+    }
+
+    @Test
+    void listTransactionsFiltersBySinceAndUntil() {
+        TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 75L, "USD", "date filter test"), "date-filter-key-1");
+        Instant beforePosting = Instant.now().minusSeconds(60);
+        Instant afterPosting = Instant.now().plusSeconds(60);
+
+        List<TransactionSummaryResponse> inRangeResults =
+                transactionService.listTransactions(null, null, beforePosting, afterPosting);
+        List<TransactionSummaryResponse> outOfRangeResults =
+                transactionService.listTransactions(null, null, afterPosting, null);
+
+        assertThat(inRangeResults).extracting(TransactionSummaryResponse::transactionId)
+                .contains(posted.transactionId());
+        assertThat(outOfRangeResults).extracting(TransactionSummaryResponse::transactionId)
+                .doesNotContain(posted.transactionId());
+    }
+
+    @Test
+    void getTransactionReturnsDetailWithEntries() {
+        TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 300L, "USD", "detail test"), "detail-test-key-1");
+
+        TransactionDetailResponse detail = transactionService.getTransaction(posted.transactionId());
+
+        assertThat(detail.transactionId()).isEqualTo(posted.transactionId());
+        assertThat(detail.entries()).hasSize(2);
+        assertThat(detail.entries()).extracting(EntryResponse::direction).containsExactlyInAnyOrder("DEBIT", "CREDIT");
+    }
+
+    @Test
+    void getTransactionThrowsWhenNotFound() {
+        assertThatThrownBy(() -> transactionService.getTransaction(UUID.randomUUID()))
+                .isInstanceOf(TransactionNotFoundException.class);
     }
 }
