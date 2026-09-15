@@ -15,6 +15,7 @@
         <module>holds-service</module>
         <module>api-gateway</module>
         <module>fx-service</module>
+        <module>gateway-simulator</module>
     </modules>
 
     <properties>

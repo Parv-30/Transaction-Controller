@@ -1,0 +1,38 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: gateway-simulator
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:gateway_sim_db}
+    username: ${DB_USER:gatewaysim}
+    password: ${DB_PASSWORD:gatewaysim}
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+gateway-sim:
+  withdrawal-timeout-seconds: ${GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS:60}
+  withdrawal-sweep:
+    interval-ms: ${GATEWAY_SIM_WITHDRAWAL_SWEEP_INTERVAL_MS:15000}
+
+ledger:
+  base-url: ${LEDGER_SERVICE_URL:http://localhost:8090}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health
+  metrics:
+    tags:
+      application: ${spring.application.name}
