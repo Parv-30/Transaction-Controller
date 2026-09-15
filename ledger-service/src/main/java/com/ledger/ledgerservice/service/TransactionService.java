@@ -108,6 +108,17 @@ public class TransactionService {
      * than silently returning the existing reversal, since the deterministic idempotency key on
      * the underlying postTransaction call already protects against genuinely concurrent
      * in-flight requests.
+     *
+     * <p>Accepted non-atomicity: postTransaction and finalizeReversal are two separate
+     * transactions, not one. If finalizeReversal fails after postTransaction has already
+     * committed the compensating transaction (e.g. an infra blip), the original's status will
+     * not yet read REVERSED, so a caller could retry this whole method. That retry is safe, not
+     * a double-reversal risk: the deterministic idempotency key means the retried
+     * postTransaction call replays the already-committed reversal rather than posting a second
+     * one, and calling finalizeReversal a second time with the same arguments is itself
+     * idempotent (re-setting the same link, re-marking REVERSED). This is an intentionally
+     * accepted eventual-consistency window, the same shape as this codebase's existing FX-saga
+     * compensation tradeoffs, not a gap left unconsidered.
      */
     public TransactionSummaryResponse reverseTransaction(UUID transactionId) {
         Transaction original = transactionRepository.findById(transactionId)
