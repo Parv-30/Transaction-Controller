@@ -43,7 +43,7 @@ remove_toxic() {
 }
 
 reset_all_toxics() {
-  for proxy in ledger-postgres-app-proxy ledger-postgres-cdc-proxy rabbitmq-proxy; do
+  for proxy in ledger-postgres-app-proxy ledger-postgres-cdc-proxy rabbitmq-proxy gateway-sim-rabbitmq; do
     for toxic in $(curl -sf "$TOXIPROXY_API/proxies/$proxy/toxics" | grep -o '"name":"[^"]*"' | cut -d'"' -f4); do
       remove_toxic "$proxy" "$toxic"
     done
@@ -67,6 +67,19 @@ post_transaction() {
     -H "Content-Type: application/json" \
     -H "Idempotency-Key: $idem_key" \
     -d "{\"debitAccountRef\":\"$debit_ref\",\"creditAccountRef\":\"$credit_ref\",\"amountMinor\":$amount,\"currency\":\"USD\",\"description\":\"chaos test\"}"
+}
+
+post_transaction_with_type() {
+  local debit_ref="$1"
+  local credit_ref="$2"
+  local amount="$3"
+  local idem_key="$4"
+  local transaction_type="$5"
+  curl -s -w "\n%{http_code}" -X POST "$GATEWAY_URL/transactions" \
+    -H "Authorization: Bearer $(get_chaos_suite_token)" \
+    -H "Content-Type: application/json" \
+    -H "Idempotency-Key: $idem_key" \
+    -d "{\"debitAccountRef\":\"$debit_ref\",\"creditAccountRef\":\"$credit_ref\",\"amountMinor\":$amount,\"currency\":\"USD\",\"description\":\"chaos test\",\"transactionType\":\"$transaction_type\"}"
 }
 
 seed_account_with_currency() {

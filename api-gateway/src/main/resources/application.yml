@@ -36,6 +36,22 @@ spring:
           uri: ${FX_SERVICE_URL:http://localhost:8083}
           predicates:
             - Path=/conversions/**
+        - id: gateway-sim-webhooks
+          uri: ${GATEWAY_SIMULATOR_URL:http://localhost:8084}
+          predicates:
+            - Path=/webhooks/**
+        - id: gateway-sim-simulator
+          uri: ${GATEWAY_SIMULATOR_URL:http://localhost:8084}
+          predicates:
+            - Path=/simulator/**
+        - id: gateway-sim-external-deposits
+          uri: ${GATEWAY_SIMULATOR_URL:http://localhost:8084}
+          predicates:
+            - Path=/external-deposits/**
+        - id: gateway-sim-external-withdrawals
+          uri: ${GATEWAY_SIMULATOR_URL:http://localhost:8084}
+          predicates:
+            - Path=/external-withdrawals/**
         - id: ledger-accounts
           uri: ${LEDGER_SERVICE_URL:http://localhost:8090}
           predicates:

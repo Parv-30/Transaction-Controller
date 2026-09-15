@@ -33,7 +33,7 @@
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `CreateTransactionRequest.transactionType()` (nullable `String`, defaults to `"TRANSFER"` server-side when absent or blank) — later tasks' Gateway Simulator code posts `WITHDRAWAL_EXTERNAL` through this field. The outbox JSON payload gains a `"transactionType"` key that Task 5's consumer reads.
+- Produces: `CreateTransactionRequest.transactionType()` (nullable `String`, defaults to `"TRANSFER"` server-side when absent or blank) — later tasks' Gateway Simulator code posts `WITHDRAWAL_EXTERNAL` through this field. The outbox JSON payload gains a `"transactionType"` key that Task 6's consumer reads.
 
 - [ ] **Step 1: Write the failing test — request without transactionType still defaults to TRANSFER**
 
@@ -141,7 +141,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `external-clearing-{currency}` accounts (e.g. `external-clearing-USD`) are now exempt from the Holds Service held-balance check — Task 8 and Task 9's Gateway Simulator code relies on this to post deposit/withdrawal/reversal transactions without needing an active Holds Service round-trip against a suspense account.
+- Produces: `external-clearing-{currency}` accounts (e.g. `external-clearing-USD`) are now exempt from the Holds Service held-balance check — Task 9 and Task 10's Gateway Simulator code relies on this to post deposit/withdrawal/reversal transactions without needing an active Holds Service round-trip against a suspense account.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -215,7 +215,125 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Scaffold the `gateway-simulator` Maven module
+### Task 3: Seed the `external-clearing-USD` account and extend the reservation guard
+
+**Files:**
+- Create: `ledger-service/src/main/resources/db/migration/V7__seed_external_clearing_account.sql`
+- Modify: `ledger-service/src/main/java/com/ledger/ledgerservice/service/AccountService.java`
+- Test: `ledger-service/src/test/java/com/ledger/ledgerservice/service/AccountServiceIntegrationTest.java`
+
+**Interfaces:**
+- Consumes: `TransactionPoster.isClearingAccount(String)` (Task 2).
+- Produces: a real `external-clearing-USD` account row that exists in every environment (dev, test, CI) from schema-migration time onward, and a client-facing guarantee that `POST /accounts` refuses any `external-clearing-*` ref — later tasks (9, 10, 11) rely on this account genuinely existing when they debit/credit it, exactly the way Task 8/9's tests already assume without any task previously creating it.
+
+This task exists because Task 2's implementer correctly identified a real gap during that task's own work: `fx-clearing-{USD,EUR,GBP}` accounts are seeded via a dedicated Flyway migration (`V4__seed_fx_clearing_accounts.sql`) specifically because `POST /accounts` deliberately refuses to let a client create an account under that prefix (`AccountService.createAccount`'s `ReservedAccountRefException` guard) — since `TransactionPoster` grants that prefix an unlimited-overdraft privilege that must never be reachable via client-chosen data. Task 2 generalized the *overdraft exemption* to also cover `external-clearing-`, but nothing in the original plan ever created that account or extended the *reservation guard* to match — every later task that references `external-clearing-USD` was silently assuming it already existed. This task closes both gaps, mirroring the `fx-clearing-` precedent exactly.
+
+- [ ] **Step 1: Write the failing test — `POST /accounts` refuses an `external-clearing-` ref**
+
+Read `AccountServiceIntegrationTest.java`'s existing test proving the `fx-clearing-` guard (search for `ReservedAccountRefException` or a test name like `creatingAnAccountWithTheFxClearingPrefixIsRejected`) to match its exact structure and helper/assertion style before writing this analogous test:
+
+```java
+@Test
+void creatingAnAccountWithTheExternalClearingPrefixIsRejected() {
+    CreateAccountRequest request = new CreateAccountRequest("external-clearing-USD", "USD", null);
+    assertThatThrownBy(() -> accountService.createAccount(request))
+            .isInstanceOf(ReservedAccountRefException.class);
+}
+```
+
+(Match the real `CreateAccountRequest` constructor signature and the real assertion style used by the sibling `fx-clearing-` test — read that test first rather than assuming the snippet above is exactly right.)
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `mvn -pl ledger-service -am test -Dtest=AccountServiceIntegrationTest#creatingAnAccountWithTheExternalClearingPrefixIsRejected -Dapi.version=1.44` (with `DOCKER_HOST=tcp://127.0.0.1:2375 DOCKER_API_VERSION=1.44`)
+Expected: FAIL — the guard doesn't check this prefix yet, so `createAccount` succeeds instead of throwing.
+
+- [ ] **Step 3: Extend the reservation guard in `AccountService`**
+
+Read the existing guard (around line 36-39 per Task 2's own file, though line numbers may have shifted slightly after Task 2's edit — find it by searching for `ReservedAccountRefException`):
+```java
+if (request.accountRef() != null
+        && request.accountRef().startsWith(TransactionPoster.FX_CLEARING_ACCOUNT_REF_PREFIX)) {
+    throw new ReservedAccountRefException(request.accountRef());
+}
+```
+Replace the condition with a call to Task 2's new `TransactionPoster.isClearingAccount(String)` helper, which already covers both prefixes:
+```java
+if (request.accountRef() != null && TransactionPoster.isClearingAccount(request.accountRef())) {
+    throw new ReservedAccountRefException(request.accountRef());
+}
+```
+Update the method's Javadoc comment (the one explaining why this guard exists, referencing `FX_CLEARING_ACCOUNT_REF_PREFIX`) to describe both clearing-account prefixes this guard now covers, matching the two-purpose comment Task 2 already wrote in `TransactionPoster` itself.
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run the same command as Step 2.
+Expected: PASS.
+
+- [ ] **Step 5: Write the seed migration**
+
+Follow `V4__seed_fx_clearing_accounts.sql`'s exact structure and comment style:
+
+```sql
+-- Seeds the platform-owned external clearing account used as the suspense/netting account for
+-- Gateway Simulator's inbound deposits and outbound withdrawal reversals (see
+-- gateway-simulator's DepositService / WithdrawalResolutionService). This account cannot be
+-- created through the ordinary POST /accounts endpoint: AccountService deliberately rejects any
+-- client-supplied accountRef under the "external-clearing-" prefix (ReservedAccountRefException),
+-- because TransactionPoster grants that prefix an unlimited-overdraft privilege that must not be
+-- reachable by client-chosen data (see TransactionPoster.isClearingAccount and Task 2/Task 3 of
+-- the V5 implementation plan). It is baseline platform data, not a user-created wallet, so it is
+-- seeded here via migration rather than via any HTTP endpoint. account_group_id is left NULL:
+-- it does not belong to any customer wallet/group. Only USD is seeded because this platform's
+-- Gateway Simulator scope (V5) only ever references external-clearing-USD; extend this file with
+-- additional currencies if a later feature needs them, following the same pattern as
+-- V4__seed_fx_clearing_accounts.sql's multi-currency seeding.
+INSERT INTO accounts (id, account_ref, display_name, currency, balance_minor, status, account_group_id)
+VALUES
+    (gen_random_uuid(), 'external-clearing-USD', 'External Clearing (USD)', 'USD', 0, 'ACTIVE', NULL)
+ON CONFLICT (account_ref) DO NOTHING;
+```
+
+Confirm the next available Flyway version number by listing `ledger-service/src/main/resources/db/migration/` (expected: `V7`, following `V6__add_expires_at_to_pending_fx_transfers.sql` from the hardening plan — verify this is still the highest existing version before naming this file, in case another migration has landed since this plan was written).
+
+- [ ] **Step 6: Write an integration test proving the seeded account exists and is usable**
+
+Add to a relevant existing integration test file (or `AccountServiceIntegrationTest.java` if that's the most natural home — check whether `V4`'s `fx-clearing-` seed has an analogous existing test to place this next to):
+
+```java
+@Test
+void externalClearingUsdAccountExistsFromMigrationAndAllowsUnlimitedOverdraft() {
+    Account seeded = accountRepository.findByAccountRef("external-clearing-USD").orElseThrow();
+    assertThat(seeded.getStatus()).isEqualTo(AccountStatus.ACTIVE);
+    assertThat(seeded.getCurrency()).isEqualTo("USD");
+}
+```
+
+(Adjust to match this codebase's real `Account`/`AccountStatus` field and accessor names — verify against the entity before finalizing.)
+
+- [ ] **Step 7: Run the full module suite**
+
+Run: `mvn -pl ledger-service -am test -Dapi.version=1.44`
+Expected: `BUILD SUCCESS`, 0 failures, 0 errors, including the two new tests from Steps 1 and 6. Confirm the Flyway migration log shows `V7` applying cleanly on top of `V1`-`V6`.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add ledger-service/src/main/resources/db/migration/V7__seed_external_clearing_account.sql \
+        ledger-service/src/main/java/com/ledger/ledgerservice/service/AccountService.java \
+        ledger-service/src/test/java/com/ledger/ledgerservice/service/AccountServiceIntegrationTest.java
+git commit -m "feat(ledger-service): seed external-clearing-USD account and extend the reservation guard
+
+Closes a gap surfaced during Task 2: nothing previously created the
+external-clearing- suspense account that Gateway Simulator's later tasks
+require, and the client-facing reservation guard only covered fx-clearing-.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 4: Scaffold the `gateway-simulator` Maven module
 
 **Files:**
 - Create: `gateway-simulator/pom.xml`
@@ -226,7 +344,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: a buildable, empty Spring Boot module joining the Maven reactor, on port `8084` (next free port after `fx-service`'s `8083`), with `@EnableScheduling` (needed by Task 10's sweep) already turned on so later tasks don't need to touch this file again.
+- Produces: a buildable, empty Spring Boot module joining the Maven reactor, on port `8084` (next free port after `fx-service`'s `8083`), with `@EnableScheduling` (needed by Task 11's sweep) already turned on so later tasks don't need to touch this file again.
 
 - [ ] **Step 1: Add the module to the root reactor**
 
@@ -333,7 +451,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Flyway schema migration
+### Task 5: Flyway schema migration
 
 **Files:**
 - Create: `gateway-simulator/src/main/resources/db/migration/V1__init_schema.sql`
@@ -464,7 +582,7 @@ CREATE TABLE processed_events (
 );
 ```
 
-(This matches `holds-service`'s exact `outbox_events`/`processed_events` shape — verify against `holds-service/src/main/resources/db/migration/V1__init_schema.sql` before finalizing, since Task 6/7's outbox-publishing code will be adapted directly from Holds Service's own `OutboxEventPublisher`/`OutboxPollingPublisher` and must match the column names it expects.)
+(This matches `holds-service`'s exact `outbox_events`/`processed_events` shape — verify against `holds-service/src/main/resources/db/migration/V1__init_schema.sql` before finalizing, since Task 7/8's outbox-publishing code will be adapted directly from Holds Service's own `OutboxEventPublisher`/`OutboxPollingPublisher` and must match the column names it expects.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -482,7 +600,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: JPA entities and repositories
+### Task 6: JPA entities and repositories
 
 **Files:**
 - Create: `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/domain/ExternalDeposit.java`
@@ -498,8 +616,8 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `gateway-simulator/src/test/java/com/ledger/gatewaysimulator/domain/EntityPersistenceIntegrationTest.java`
 
 **Interfaces:**
-- Consumes: the Task 4 schema.
-- Produces: `ExternalDepositRepository.findByExternalReference(String)`, `ExternalWithdrawalRepository.findBySourceTransactionId(UUID)`, `ExternalWithdrawalRepository.findByStatusAndSubmittedAtBefore(WithdrawalStatus, Instant)` (used by Task 10's sweep), `WebhookDedupRepository` (standard `JpaRepository<WebhookDedup, String>`), `OutboxRepository.findByPublishedAtIsNullOrderByCreatedAtAsc()` (used by Task 7's polling publisher) — later tasks depend on these exact method names.
+- Consumes: the Task 5 schema.
+- Produces: `ExternalDepositRepository.findByExternalReference(String)`, `ExternalWithdrawalRepository.findBySourceTransactionId(UUID)`, `ExternalWithdrawalRepository.findByStatusAndSubmittedAtBefore(WithdrawalStatus, Instant)` (used by Task 11's sweep), `WebhookDedupRepository` (standard `JpaRepository<WebhookDedup, String>`), `OutboxRepository.findByPublishedAtIsNullOrderByCreatedAtAsc()` (used by Task 8's polling publisher) — later tasks depend on these exact method names.
 
 - [ ] **Step 1: Write `DepositStatus` and `WithdrawalStatus` enums**
 
@@ -744,7 +862,7 @@ public class WebhookDedup {
 
 - [ ] **Step 5: Write `OutboxEvent` entity**
 
-Copy `holds-service/src/main/java/com/ledger/holdsservice/messaging/OutboxEvent.java` verbatim, changing only the package declaration to `com.ledger.gatewaysimulator.messaging` (place this file at `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/messaging/OutboxEvent.java` instead of under `domain/`, matching where Holds Service itself keeps it — adjust the file path in this task's own file list accordingly when creating it).
+Copy `holds-service/src/main/java/com/ledger/holdsservice/domain/OutboxEvent.java` verbatim, changing only the package declaration to `com.ledger.gatewaysimulator.domain` (Task 6's implementer verified Holds Service actually keeps this file under `domain/`, not `messaging/` as an earlier draft of this plan incorrectly assumed — place this file at `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/domain/OutboxEvent.java`, matching where it was actually created).
 
 - [ ] **Step 6: Write the four repositories**
 
@@ -790,7 +908,7 @@ public interface WebhookDedupRepository extends JpaRepository<WebhookDedup, Stri
 }
 ```
 
-For `OutboxRepository`, copy `holds-service/src/main/java/com/ledger/holdsservice/messaging/OutboxRepository.java` verbatim, changing only the package to `com.ledger.gatewaysimulator.messaging`.
+For `OutboxRepository`, copy `holds-service/src/main/java/com/ledger/holdsservice/repository/OutboxRepository.java` verbatim, changing only the package to `com.ledger.gatewaysimulator.repository` (Task 6 already created this file at this exact path — this step is retained here only for reference/traceability).
 
 - [ ] **Step 7: Write the integration test**
 
@@ -891,7 +1009,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Outbox publisher (polling, matching Holds Service's pattern)
+### Task 7: Outbox publisher (polling, matching Holds Service's pattern)
 
 **Files:**
 - Create: `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/messaging/OutboxEventPublisher.java`
@@ -901,8 +1019,8 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `gateway-simulator/src/test/java/com/ledger/gatewaysimulator/messaging/OutboxPollingPublisherIntegrationTest.java`
 
 **Interfaces:**
-- Consumes: `OutboxRepository` (Task 5).
-- Produces: `OutboxEventPublisher.publish(OutboxEvent)` — Task 8 and Task 9's services call `outboxRepository.save(...)` directly (the polling publisher picks up unpublished rows on its own schedule), so this task's only consumed interface by later tasks is the existence of a working outbox-row-to-RabbitMQ pipeline, not a directly-called Java method.
+- Consumes: `OutboxRepository` (Task 6).
+- Produces: `OutboxEventPublisher.publish(OutboxEvent)` — Task 9 and Task 10's services call `outboxRepository.save(...)` directly (the polling publisher picks up unpublished rows on its own schedule), so this task's only consumed interface by later tasks is the existence of a working outbox-row-to-RabbitMQ pipeline, not a directly-called Java method.
 
 - [ ] **Step 1: Read Holds Service's existing outbox-publishing code as the template**
 
@@ -923,7 +1041,7 @@ public final class MessagingConstants {
     // TRANSACTION_POSTED_ROUTING_KEY exactly — this is V1's existing exchange, not a new one.
     // Verified against the real, current
     // transaction-processor/src/main/java/com/ledger/txprocessor/messaging/MessagingConstants.java
-    // as of this task (Task 7 in this plan consumes it).
+    // as of this task (Task 8 in this plan consumes it).
     public static final String LEDGER_EXCHANGE = "ledger.events";
     public static final String TRANSACTION_POSTED_ROUTING_KEY = "ledger.transaction.posted";
     public static final String GATEWAY_SIM_TRANSACTION_POSTED_QUEUE =
@@ -936,11 +1054,11 @@ public final class MessagingConstants {
 
 - [ ] **Step 3: Write `OutboxEventPublisher` and `OutboxPollingPublisher`**
 
-Adapt Holds Service's versions directly: same publisher-confirms pattern (if Holds Service's publisher uses confirms; verify by reading it), same polling interval/batch-size configuration style, same `published_at` marking logic. Change only: package declaration, and the exchange name from Holds Service's own exchange to `MessagingConstants.GATEWAY_SIM_EXCHANGE` (Gateway Simulator publishes its own events — `deposit.credited`, `withdrawal.reversed`, etc. — on its own exchange, distinct from the `ledger.events` exchange it separately consumes from in Task 7). No other service currently needs to consume Gateway Simulator's own published events in this plan's scope, but declaring the exchange and publishing pipeline now keeps this service's shape consistent with every other service in the platform and leaves room for a future consumer without rework.
+Adapt Holds Service's versions directly: same publisher-confirms pattern (if Holds Service's publisher uses confirms; verify by reading it), same polling interval/batch-size configuration style, same `published_at` marking logic. Change only: package declaration, and the exchange name from Holds Service's own exchange to `MessagingConstants.GATEWAY_SIM_EXCHANGE` (Gateway Simulator publishes its own events — `deposit.credited`, `withdrawal.reversed`, etc. — on its own exchange, distinct from the `ledger.events` exchange it separately consumes from in Task 8). No other service currently needs to consume Gateway Simulator's own published events in this plan's scope, but declaring the exchange and publishing pipeline now keeps this service's shape consistent with every other service in the platform and leaves room for a future consumer without rework.
 
 - [ ] **Step 4: Write `RabbitConfig`**
 
-Declare: the `RabbitTemplate` bean (Jackson2JsonMessageConverter, matching every other service), the `GATEWAY_SIM_EXCHANGE` topic exchange declaration (this service owns and declares this one, unlike the `ledger.events` exchange it only binds to in Task 7).
+Declare: the `RabbitTemplate` bean (Jackson2JsonMessageConverter, matching every other service), the `GATEWAY_SIM_EXCHANGE` topic exchange declaration (this service owns and declares this one, unlike the `ledger.events` exchange it only binds to in Task 8).
 
 - [ ] **Step 5: Write the integration test**
 
@@ -962,7 +1080,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: Consume `ledger.transaction.posted`, filtered to `WITHDRAWAL_EXTERNAL`
+### Task 8: Consume `ledger.transaction.posted`, filtered to `WITHDRAWAL_EXTERNAL`
 
 **Files:**
 - Create: `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/messaging/LedgerTransactionPostedConsumer.java`
@@ -972,12 +1090,12 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `gateway-simulator/src/test/java/com/ledger/gatewaysimulator/messaging/LedgerTransactionPostedConsumerIntegrationTest.java`
 
 **Interfaces:**
-- Consumes: Task 1's outbox `transactionType` payload field; Task 6's `RabbitConfig` (adds a binding); `ExternalWithdrawalRepository` (Task 5).
-- Produces: `WithdrawalSubmissionService.submit(UUID sourceTransactionId, String accountRef, long amountMinor, String currency)` — creates the `external_withdrawals` row and invokes the simulated-rail stub. Task 8's confirm endpoint reads rows this creates.
+- Consumes: Task 1's outbox `transactionType` payload field; Task 7's `RabbitConfig` (adds a binding); `ExternalWithdrawalRepository` (Task 6).
+- Produces: `WithdrawalSubmissionService.submit(UUID sourceTransactionId, String accountRef, long amountMinor, String currency)` — creates the `external_withdrawals` row and invokes the simulated-rail stub. Task 9's confirm endpoint reads rows this creates.
 
 - [ ] **Step 1: Add the RabbitMQ binding to `RabbitConfig`**
 
-Add, to the existing `RabbitConfig` class from Task 6: a `TopicExchange` bean for `MessagingConstants.LEDGER_EXCHANGE` (declared idempotently — matches Holds Service's own `RabbitConfig.ledgerExchange()` bean exactly, since it's not a resource this service owns), a `Queue` bean for `MessagingConstants.GATEWAY_SIM_TRANSACTION_POSTED_QUEUE`, and a `Binding` bean binding that queue to that exchange with routing key `MessagingConstants.TRANSACTION_POSTED_ROUTING_KEY`. Copy the exact bean-declaration shape from `holds-service/src/main/java/com/ledger/holdsservice/messaging/RabbitConfig.java`'s equivalent three beans.
+Add, to the existing `RabbitConfig` class from Task 7: a `TopicExchange` bean for `MessagingConstants.LEDGER_EXCHANGE` (declared idempotently — matches Holds Service's own `RabbitConfig.ledgerExchange()` bean exactly, since it's not a resource this service owns), a `Queue` bean for `MessagingConstants.GATEWAY_SIM_TRANSACTION_POSTED_QUEUE`, and a `Binding` bean binding that queue to that exchange with routing key `MessagingConstants.TRANSACTION_POSTED_ROUTING_KEY`. Copy the exact bean-declaration shape from `holds-service/src/main/java/com/ledger/holdsservice/messaging/RabbitConfig.java`'s equivalent three beans.
 
 - [ ] **Step 2: Write `ProcessedEventGate`**
 
@@ -1017,7 +1135,7 @@ public class WithdrawalSubmissionService {
     /**
      * Stands in for a real payment rail's submission call. No real external call, no
      * synchronous outcome — resolution always arrives later via the confirm endpoint
-     * (Task 8) or the timeout sweep (Task 10), never from this method, so the async
+     * (Task 9) or the timeout sweep (Task 11), never from this method, so the async
      * resolution path is always exercised uniformly.
      */
     private void submitToSimulatedRail(ExternalWithdrawal withdrawal) {
@@ -1108,7 +1226,7 @@ public class LedgerTransactionPostedConsumer {
 Adapt `holds-service/src/test/java/com/ledger/holdsservice/messaging/LedgerTransactionPostedConsumerIntegrationTest.java`'s Testcontainers setup (real Postgres + RabbitMQ, `rabbitTemplate.send(...)` with the `outboxEventId`/`aggregateId`/`eventType` headers, `awaitility` for async assertions). Write 3 tests:
 1. A `WITHDRAWAL_EXTERNAL`-typed message creates an `external_withdrawals` row with the correct fields.
 2. A `TRANSFER`-typed message (ordinary transfer) is acked and ignored — no `external_withdrawals` row is created.
-3. Redelivering the same `WITHDRAWAL_EXTERNAL` message twice (same `outboxEventId`) creates exactly one `external_withdrawals` row — proving `ProcessedEventGate` dedups correctly (mirrors the existing redelivery test pattern already used by every other consumer in this codebase, e.g. `holds-service`'s own duplicate-delivery test added during the hardening plan's Task 10).
+3. Redelivering the same `WITHDRAWAL_EXTERNAL` message twice (same `outboxEventId`) creates exactly one `external_withdrawals` row — proving `ProcessedEventGate` dedups correctly (mirrors the existing redelivery test pattern already used by every other consumer in this codebase, e.g. `holds-service`'s own duplicate-delivery test added during the hardening plan's Task 11).
 
 - [ ] **Step 6: Run tests**
 
@@ -1126,7 +1244,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Ledger transaction client + reversal posting
+### Task 9: Ledger transaction client + reversal posting
 
 **Files:**
 - Create: `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/ledger/LedgerTransactionClient.java`
@@ -1135,7 +1253,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: `LedgerTransactionClient.postTransaction(String debitAccountRef, String creditAccountRef, long amountMinor, String currency, String description, String idempotencyKey)` returning the created/replayed `transactionId` — used by Task 9 (deposit credit) and Task 10 (reversal posting).
+- Produces: `LedgerTransactionClient.postTransaction(String debitAccountRef, String creditAccountRef, long amountMinor, String currency, String description, String idempotencyKey)` returning the created/replayed `transactionId` — used by Task 10 (deposit credit) and Task 11 (reversal posting).
 
 - [ ] **Step 1: Read the existing HTTP-client precedent**
 
@@ -1190,7 +1308,7 @@ public class LedgerServiceUnavailableException extends RuntimeException {
 
 - [ ] **Step 5: Write `LedgerTransactionClient`**
 
-Adapt Holds Service's `LedgerTransactionClient` directly: `RestClient`-based, constructor takes the base URL, `postTransaction(...)` builds a `CreateTransactionRequest`-shaped JSON body (matching Task 1's DTO: `debitAccountRef`, `creditAccountRef`, `amountMinor`, `currency`, `description`, `transactionType` — omit `transactionType` for deposit credits and reversals, since both should default to `"TRANSFER"` per Task 1's Step 3 defaulting behavior, since neither a deposit credit nor a withdrawal reversal is itself a `WITHDRAWAL_EXTERNAL`-typed transaction — only the original client-initiated debit is), sets the `Idempotency-Key` header, parses the `transactionId` field from the response body on `2xx`, throws `LedgerServiceUnavailableException` on a connection failure/timeout, and lets a non-2xx response's exception propagate to the caller (Task 9/10 decide how to handle a definitive rejection — do not swallow it inside this client).
+Adapt Holds Service's `LedgerTransactionClient` directly: `RestClient`-based, constructor takes the base URL, `postTransaction(...)` builds a `CreateTransactionRequest`-shaped JSON body (matching Task 1's DTO: `debitAccountRef`, `creditAccountRef`, `amountMinor`, `currency`, `description`, `transactionType` — omit `transactionType` for deposit credits and reversals, since both should default to `"TRANSFER"` per Task 1's Step 3 defaulting behavior, since neither a deposit credit nor a withdrawal reversal is itself a `WITHDRAWAL_EXTERNAL`-typed transaction — only the original client-initiated debit is), sets the `Idempotency-Key` header, parses the `transactionId` field from the response body on `2xx`, throws `LedgerServiceUnavailableException` on a connection failure/timeout, and lets a non-2xx response's exception propagate to the caller (Task 10/11 decide how to handle a definitive rejection — do not swallow it inside this client).
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -1208,7 +1326,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 9: Inbound deposit flow — webhook + control-plane trigger
+### Task 10: Inbound deposit flow — webhook + control-plane trigger
 
 **Files:**
 - Create: `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/api/DepositController.java`
@@ -1220,8 +1338,8 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `gateway-simulator/src/test/java/com/ledger/gatewaysimulator/service/DepositServiceIntegrationTest.java`
 
 **Interfaces:**
-- Consumes: `LedgerTransactionClient` (Task 8), `ExternalDepositRepository`/`WebhookDedupRepository` (Task 5).
-- Produces: `POST /simulator/deposits`, `POST /webhooks/deposits`, `GET /external-deposits/{externalReference}` — Task 12's chaos scenario 07 and Task 13's smoke-test/manual verification call these directly.
+- Consumes: `LedgerTransactionClient` (Task 9), `ExternalDepositRepository`/`WebhookDedupRepository` (Task 6).
+- Produces: `POST /simulator/deposits`, `POST /webhooks/deposits`, `GET /external-deposits/{externalReference}` — Task 13's chaos scenario 07 and Task 14's smoke-test/manual verification call these directly.
 
 - [ ] **Step 1: Write the failing test — first delivery credits, redelivery short-circuits**
 
@@ -1376,7 +1494,7 @@ public class DepositService {
 }
 ```
 
-Note the deliberate `@Transactional` boundary here wraps the dedup-check-and-insert plus the local row updates, but the outbound `ledgerTransactionClient.postTransaction(...)` HTTP call happens inside it — this mirrors the exact same lock-duration tradeoff the hardening plan's README already documents for `TransactionPoster`'s Holds Service call (a blocking network call made while holding a DB transaction open). This is an accepted, consistent pattern already established elsewhere in this codebase, not a new risk introduced here; call this out explicitly in Task 13's README update rather than trying to avoid it via manual transaction-boundary splitting, which would complicate the redelivery-safety guarantee this method provides.
+Note the deliberate `@Transactional` boundary here wraps the dedup-check-and-insert plus the local row updates, but the outbound `ledgerTransactionClient.postTransaction(...)` HTTP call happens inside it — this mirrors the exact same lock-duration tradeoff the hardening plan's README already documents for `TransactionPoster`'s Holds Service call (a blocking network call made while holding a DB transaction open). This is an accepted, consistent pattern already established elsewhere in this codebase, not a new risk introduced here; call this out explicitly in Task 14's README update rather than trying to avoid it via manual transaction-boundary splitting, which would complicate the redelivery-safety guarantee this method provides.
 
 - [ ] **Step 5: Write `DepositController`**
 
@@ -1452,7 +1570,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 10: Outbound withdrawal confirm/fail + reversal + timeout sweep
+### Task 11: Outbound withdrawal confirm/fail + reversal + timeout sweep
 
 **Files:**
 - Create: `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/api/WithdrawalController.java`
@@ -1467,8 +1585,8 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 - Test: `gateway-simulator/src/test/java/com/ledger/gatewaysimulator/service/WithdrawalTimeoutSweepIntegrationTest.java`
 
 **Interfaces:**
-- Consumes: `ExternalWithdrawalRepository` (Task 5), `LedgerTransactionClient` (Task 8), `WithdrawalSubmissionService`-created rows (Task 7).
-- Produces: `POST /simulator/withdrawals/{id}/confirm`, `GET /external-withdrawals/{id}` — Task 12's chaos scenarios 08/09 and Task 13's manual verification call these directly.
+- Consumes: `ExternalWithdrawalRepository` (Task 6), `LedgerTransactionClient` (Task 9), `WithdrawalSubmissionService`-created rows (Task 8).
+- Produces: `POST /simulator/withdrawals/{id}/confirm`, `GET /external-withdrawals/{id}` — Task 13's chaos scenarios 08/09 and Task 14's manual verification call these directly.
 
 - [ ] **Step 1: Write the failing tests for `WithdrawalResolutionService`**
 
@@ -1613,7 +1731,7 @@ public class WithdrawalResolutionService {
 }
 ```
 
-Note: `WithdrawalNotYetSubmittedException` as written above only fires when a row exists but isn't `SUBMITTED` (e.g. already `CONFIRMED`/`FAILED`/`REVERSED`/`TIMED_OUT`) — re-check this against the spec's actual race condition, which is a row that **doesn't exist at all yet** (the RabbitMQ consumption from Task 7 hasn't completed before the confirm call arrives). Adjust: `findById` returning empty should ALSO throw `WithdrawalNotYetSubmittedException` (not `WithdrawalNotFoundException` — that's reserved for the `GET` endpoint's genuinely-permanent "no such id" case), since from the confirm endpoint's caller's perspective, an absent row and a not-yet-SUBMITTED row are the same retryable situation. Update the `orElseThrow` on the first line of `confirm(...)` to throw `WithdrawalNotYetSubmittedException` instead of `WithdrawalNotFoundException`, and drop the separate status check below it (an existing row from `findById` is always `SUBMITTED` at this point in the flow, since nothing else transitions it before this method runs — verify this invariant holds given Task 7's `WithdrawalSubmissionService.submit()` always creates rows in `SUBMITTED` status and nothing else writes to this table except this method and the sweep).
+Note: `WithdrawalNotYetSubmittedException` as written above only fires when a row exists but isn't `SUBMITTED` (e.g. already `CONFIRMED`/`FAILED`/`REVERSED`/`TIMED_OUT`) — re-check this against the spec's actual race condition, which is a row that **doesn't exist at all yet** (the RabbitMQ consumption from Task 8 hasn't completed before the confirm call arrives). Adjust: `findById` returning empty should ALSO throw `WithdrawalNotYetSubmittedException` (not `WithdrawalNotFoundException` — that's reserved for the `GET` endpoint's genuinely-permanent "no such id" case), since from the confirm endpoint's caller's perspective, an absent row and a not-yet-SUBMITTED row are the same retryable situation. Update the `orElseThrow` on the first line of `confirm(...)` to throw `WithdrawalNotYetSubmittedException` instead of `WithdrawalNotFoundException`, and drop the separate status check below it (an existing row from `findById` is always `SUBMITTED` at this point in the flow, since nothing else transitions it before this method runs — verify this invariant holds given Task 8's `WithdrawalSubmissionService.submit()` always creates rows in `SUBMITTED` status and nothing else writes to this table except this method and the sweep).
 
 - [ ] **Step 5: Write `WithdrawalTimeoutSweep`**
 
@@ -1682,7 +1800,7 @@ public class WithdrawalTimeoutSweep {
 }
 ```
 
-This follows the exact structure of `HoldExpirySweep` (Task 5's read; `holds-service/src/main/java/com/ledger/holdsservice/service/HoldExpirySweep.java`): per-row try/catch so one failing row doesn't block the rest of the sweep, and a status re-check inside the transactional method to guard against a race with a concurrent confirm call between the initial query and the update. `markTimedOutAndReverse` calling `resolutionService.reverse(withdrawal)` (a public method on a different Spring bean) from within its own `@Transactional` method is safe — this is a cross-bean call through the proxy, not a same-class self-invocation, so it does not trigger this codebase's known Spring AOP self-invocation bug (verify this reasoning holds by confirming `WithdrawalTimeoutSweep` and `WithdrawalResolutionService` are genuinely different Spring beans, which they are per their separate `@Component`/`@Service` annotations above).
+This follows the exact structure of `HoldExpirySweep` (Task 6's read; `holds-service/src/main/java/com/ledger/holdsservice/service/HoldExpirySweep.java`): per-row try/catch so one failing row doesn't block the rest of the sweep, and a status re-check inside the transactional method to guard against a race with a concurrent confirm call between the initial query and the update. `markTimedOutAndReverse` calling `resolutionService.reverse(withdrawal)` (a public method on a different Spring bean) from within its own `@Transactional` method is safe — this is a cross-bean call through the proxy, not a same-class self-invocation, so it does not trigger this codebase's known Spring AOP self-invocation bug (verify this reasoning holds by confirming `WithdrawalTimeoutSweep` and `WithdrawalResolutionService` are genuinely different Spring beans, which they are per their separate `@Component`/`@Service` annotations above).
 
 - [ ] **Step 6: Write `WithdrawalController`**
 
@@ -1745,7 +1863,7 @@ package com.ledger.gatewaysimulator.service;
 
 // Standard Testcontainers setup, stub LedgerTransactionClient target.
 // Insert an ExternalWithdrawal row directly via the repository, then backdate its
-// submitted_at column via JdbcTemplate (same technique as Task 5's
+// submitted_at column via JdbcTemplate (same technique as Task 6's
 // findByStatusAndSubmittedAtBeforeFindsOnlyStuckSubmittedRows test) to simulate it being
 // older than the configured timeout — do NOT sleep in the test.
 // Manually invoke sweep.run() (autowired bean) rather than waiting on the real @Scheduled
@@ -1775,7 +1893,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 11: Observability — 4 new metrics on the existing Prometheus/Grafana stack
+### Task 12: Observability — 4 new metrics on the existing Prometheus/Grafana stack
 
 **Files:**
 - Modify: `prometheus/prometheus.yml`
@@ -1787,7 +1905,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Add `gateway-simulator` as a Prometheus scrape target**
 
-In `prometheus/prometheus.yml`, add a new `job_name: 'gateway-simulator'` entry following the exact shape of the existing 5 entries, targeting `gateway-simulator:8084` (container-network hostname/port, matching Task 3's `application.yml` port and whatever `docker-compose.yml`'s Task 12 service name will be).
+In `prometheus/prometheus.yml`, add a new `job_name: 'gateway-simulator'` entry following the exact shape of the existing 5 entries, targeting `gateway-simulator:8084` (container-network hostname/port, matching Task 4's `application.yml` port and whatever `docker-compose.yml`'s Task 13 service name will be).
 
 - [ ] **Step 2: Verify exact metric names live**
 
@@ -1812,7 +1930,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 12: Docker Compose + API Gateway wiring
+### Task 13: Docker Compose + API Gateway wiring
 
 **Files:**
 - Modify: `docker-compose.yml`
@@ -1820,7 +1938,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: everything from Tasks 1-11.
-- Produces: a fully wired, launchable `gateway-simulator` service reachable through the gateway — Task 13's chaos scenarios and manual verification depend on this.
+- Produces: a fully wired, launchable `gateway-simulator` service reachable through the gateway — Task 14's chaos scenarios and manual verification depend on this.
 
 - [ ] **Step 1: Add `gateway-sim-db` and `gateway-simulator` to `docker-compose.yml`**
 
@@ -1858,7 +1976,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 13: Extend `scripts/smoke-test.sh`, add `post_transaction_with_type` chaos helper, add 3 new chaos scenarios
+### Task 14: Extend `scripts/smoke-test.sh`, add `post_transaction_with_type` chaos helper, add 3 new chaos scenarios
 
 **Files:**
 - Modify: `scripts/smoke-test.sh`
@@ -1991,11 +2109,11 @@ assert_reconciliation_clean || fail "reconciliation found issues after scenario 
 pass "Scenario 8: unconfirmed withdrawal timed out and was correctly reversed"
 ```
 
-Resolve the timeout-override concern named in the script's own echo statements as a real implementation step, not just a comment: add a `GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS: 10` override specifically for chaos-test runs, either via a `docker-compose.override.yml` used only by `make chaos-test` (check whether such an override file convention already exists in this repo for other test-specific tuning — `grep -rn "override" Makefile docker-compose*.yml`) or by having this script itself restart just the `gateway-simulator` container with the env var overridden before running (`docker compose stop gateway-simulator && docker compose run -e GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS=10 -d gateway-simulator`, adjusted to whatever actually works cleanly against this project's existing compose setup). Pick whichever mechanism is simpler given what already exists, and make sure the 60-second production default in `application.yml` from Task 3 is left unchanged — only this chaos scenario's own run environment should override it.
+Resolve the timeout-override concern named in the script's own echo statements as a real implementation step, not just a comment: add a `GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS: 10` override specifically for chaos-test runs, either via a `docker-compose.override.yml` used only by `make chaos-test` (check whether such an override file convention already exists in this repo for other test-specific tuning — `grep -rn "override" Makefile docker-compose*.yml`) or by having this script itself restart just the `gateway-simulator` container with the env var overridden before running (`docker compose stop gateway-simulator && docker compose run -e GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS=10 -d gateway-simulator`, adjusted to whatever actually works cleanly against this project's existing compose setup). Pick whichever mechanism is simpler given what already exists, and make sure the 60-second production default in `application.yml` from Task 4 is left unchanged — only this chaos scenario's own run environment should override it.
 
-- [ ] **Step 5: Add a confirm-by-transaction-id route to `WithdrawalController` (small addition to Task 10's controller)**
+- [ ] **Step 5: Add a confirm-by-transaction-id route to `WithdrawalController` (small addition to Task 11's controller)**
 
-`POST /simulator/withdrawals/{id}/confirm` (Task 10) is keyed by Gateway Simulator's own internal withdrawal `id`, generated inside `WithdrawalSubmissionService.submit()` (Task 7) — a value that does not exist yet, and is not knowable to an external caller, until the RabbitMQ-driven consumption of the withdrawal event has actually happened. Scenario 09 below needs to race a confirmation attempt against that consumption, so it needs a lookup key the caller knows immediately: `sourceTransactionId`, returned directly by `POST /transactions`.
+`POST /simulator/withdrawals/{id}/confirm` (Task 11) is keyed by Gateway Simulator's own internal withdrawal `id`, generated inside `WithdrawalSubmissionService.submit()` (Task 8) — a value that does not exist yet, and is not knowable to an external caller, until the RabbitMQ-driven consumption of the withdrawal event has actually happened. Scenario 09 below needs to race a confirmation attempt against that consumption, so it needs a lookup key the caller knows immediately: `sourceTransactionId`, returned directly by `POST /transactions`.
 
 Add to `WithdrawalController` (`gateway-simulator/src/main/java/com/ledger/gatewaysimulator/api/WithdrawalController.java`):
 
@@ -2010,7 +2128,7 @@ public ResponseEntity<WithdrawalResponse> confirmByTransactionId(
 }
 ```
 
-This reuses `ExternalWithdrawalRepository.findBySourceTransactionId` (already produced by Task 5) and delegates to the existing `confirm(UUID, ConfirmWithdrawalRequest)` method above once the row is found, so it inherits the exact same `409`-on-not-yet-submitted behavior with no duplicated logic. `WithdrawalNotYetSubmittedException`'s constructor takes a `UUID` for its message — either add an overload accepting any UUID with a generic label, or adjust the message to not assume it's always a withdrawal id; a one-line change to that exception class covers both call sites.
+This reuses `ExternalWithdrawalRepository.findBySourceTransactionId` (already produced by Task 6) and delegates to the existing `confirm(UUID, ConfirmWithdrawalRequest)` method above once the row is found, so it inherits the exact same `409`-on-not-yet-submitted behavior with no duplicated logic. `WithdrawalNotYetSubmittedException`'s constructor takes a `UUID` for its message — either add an overload accepting any UUID with a generic label, or adjust the message to not assume it's always a withdrawal id; a one-line change to that exception class covers both call sites.
 
 Add one integration test to `WithdrawalResolutionServiceIntegrationTest` (or a small new test class alongside `WithdrawalController` if this codebase's convention is to test controllers separately from services — check the existing convention in `holds-service`'s tests first) proving: confirming by an unknown `sourceTransactionId` returns `409`; confirming by a known `sourceTransactionId` succeeds identically to confirming by internal `id`.
 
@@ -2111,7 +2229,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 14: README update and final full-platform acceptance verification
+### Task 15: README update and final full-platform acceptance verification
 
 **Files:**
 - Modify: `README.md`
@@ -2137,7 +2255,7 @@ Expected: `BUILD SUCCESS` across all 6 modules.
 
 - [ ] **Step 3: Run the full Docker Compose acceptance sequence, including all 9 chaos scenarios**
 
-Same sequence as Task 13 Step 6, run once more from a clean slate as the final gate.
+Same sequence as Task 14 Step 6, run once more from a clean slate as the final gate.
 
 - [ ] **Step 4: Manually verify both flows live through the gateway**
 

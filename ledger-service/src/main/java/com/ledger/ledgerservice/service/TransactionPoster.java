@@ -35,6 +35,20 @@ public class TransactionPoster {
      */
     public static final String FX_CLEARING_ACCOUNT_REF_PREFIX = "fx-clearing-";
 
+    /**
+     * Account-ref prefixes exempt from the synchronous Holds Service held-balance check (see
+     * below): FX clearing accounts (see {@link #FX_CLEARING_ACCOUNT_REF_PREFIX}), plus
+     * external-clearing accounts, which the Gateway Simulator posts deposit/withdrawal/reversal
+     * entries against as an internal suspense account and which likewise should not require an
+     * active Holds Service round-trip.
+     */
+    private static final List<String> CLEARING_ACCOUNT_REF_PREFIXES =
+            List.of(FX_CLEARING_ACCOUNT_REF_PREFIX, "external-clearing-");
+
+    public static boolean isClearingAccount(String accountRef) {
+        return CLEARING_ACCOUNT_REF_PREFIXES.stream().anyMatch(accountRef::startsWith);
+    }
+
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
     private final EntryRepository entryRepository;
@@ -123,14 +137,15 @@ public class TransactionPoster {
         if (debitAccount.getStatus() != AccountStatus.ACTIVE || creditAccount.getStatus() != AccountStatus.ACTIVE) {
             throw new AccountNotActiveException("One or both accounts are not ACTIVE");
         }
-        // FX clearing accounts are the platform's internal netting mechanism, not real funded
-        // accounts: leg 2 of a cross-currency transfer debits the destination-currency clearing
-        // account, which is expected to run negative by convention. This bypass is narrowly
-        // scoped to the "fx-clearing-" ref prefix; ordinary accounts keep the check unchanged.
-        // AccountService refuses to create accounts under this prefix, so it cannot be claimed
-        // by a client via POST /accounts.
-        boolean debitAccountAllowsNegativeBalance =
-                debitAccount.getAccountRef().startsWith(FX_CLEARING_ACCOUNT_REF_PREFIX);
+        // Clearing accounts are the platform's internal netting/suspense mechanism, not real
+        // funded accounts: e.g. leg 2 of a cross-currency transfer debits the destination-
+        // currency FX clearing account, and the Gateway Simulator debits/credits an
+        // external-clearing suspense account when posting deposits/withdrawals/reversals. Both
+        // are expected to run negative by convention. This bypass is narrowly scoped to the
+        // known clearing-account ref prefixes; ordinary accounts keep the check unchanged.
+        // AccountService refuses to create accounts under the fx-clearing- prefix, so it cannot
+        // be claimed by a client via POST /accounts.
+        boolean debitAccountAllowsNegativeBalance = isClearingAccount(debitAccount.getAccountRef());
         if (!debitAccountAllowsNegativeBalance) {
             long heldBalanceMinor = holdsServiceClient.getHeldBalance(debitAccount.getAccountRef());
             long availableBalanceMinor = debitAccount.getBalanceMinor() - heldBalanceMinor;
@@ -141,7 +156,7 @@ public class TransactionPoster {
 
         UUID transactionId = UUID.randomUUID();
         Transaction transaction = new Transaction(transactionId, idempotencyKey, TransactionStatus.POSTED,
-                "TRANSFER", request.description(), requestHash);
+                request.transactionType(), request.description(), requestHash);
 
         transactionRepository.saveAndFlush(transaction);
 
@@ -195,7 +210,8 @@ public class TransactionPoster {
                     "currency", request.currency(),
                     "debitAccountBalanceAfter", debitAccount.getBalanceMinor(),
                     "creditAccountBalanceAfter", creditAccount.getBalanceMinor(),
-                    "occurredAt", Instant.now().toString()
+                    "occurredAt", Instant.now().toString(),
+                    "transactionType", transaction.getTransactionType()
             ));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to serialize outbox payload", e);

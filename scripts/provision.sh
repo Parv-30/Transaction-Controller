@@ -35,6 +35,12 @@ curl -sf -X POST "$TOXIPROXY_API/proxies" -d '{
   "upstream": "rabbitmq:5672"
 }' > /dev/null || echo "  (rabbitmq-proxy already exists)"
 
+curl -sf -X POST "$TOXIPROXY_API/proxies" -d '{
+  "name": "gateway-sim-rabbitmq",
+  "listen": "0.0.0.0:15675",
+  "upstream": "rabbitmq:5672"
+}' > /dev/null || echo "  (gateway-sim-rabbitmq already exists)"
+
 echo "Restarting ledger-service so its datasource connects through the now-configured"
 echo "toxiproxy proxy (on first \"docker compose up\", ledger-service starts before this"
 echo "script has had a chance to create the proxies above, so its initial connection attempt"
@@ -87,5 +93,18 @@ done
 echo "Grace period for CDC replication slot creation..."
 sleep 5
 
-echo "Provisioning complete: proxies configured, CDC grant/publication created, both services"
+echo "Restarting gateway-simulator so its RabbitMQ connection goes through the now-configured"
+echo "gateway-sim-rabbitmq toxiproxy proxy (same first-boot-race reasoning as ledger-service"
+echo "above: on first \"docker compose up\", gateway-simulator may start before this script has"
+echo "created the proxy)..."
+docker compose restart gateway-simulator > /dev/null
+echo "Waiting for gateway-simulator to be healthy..."
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:8084/actuator/health > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+echo "Provisioning complete: proxies configured, CDC grant/publication created, all services"
 echo "restarted and healthy."

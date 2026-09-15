@@ -1,10 +1,14 @@
-# Ledger — Fault-Tolerant Transaction Processing System (V3)
+# Ledger — Fault-Tolerant Transaction Processing System (V5)
 
 A double-entry ledger built to guarantee correctness — no duplicate or lost transactions —
 even under concurrent load or mid-process failures. V2 added a Holds Service, an API
 Gateway as the single client-facing entry point, and OAuth2/JWT authentication via
 Keycloak. V3 adds multi-currency accounts and an FX Service, enabling cross-currency
-transfers via a saga with automatic compensation.
+transfers via a saga with automatic compensation. V5 adds a Gateway Simulator modeling
+an external payment rail — inbound deposits via webhook and outbound withdrawals with
+saga-style compensation — the platform's first component that has to survive genuinely
+hostile, non-cooperating input rather than internal, reliable-eventually traffic. (V4/Fees
+Service is permanently out of scope, per an explicit platform-wide scoping decision.)
 
 ## What this demonstrates
 
@@ -41,21 +45,25 @@ transfers via a saga with automatic compensation.
   availability tradeoff**: `POST /transactions` now checks Holds Service's held balance
   synchronously before posting, closing the previously-documented overdraw gap; if Holds
   Service is unreachable the transaction is rejected rather than risking an overdraw.
-- **Prometheus + Grafana observability across all 5 services**: transaction latency,
+- **Prometheus + Grafana observability across all 6 services**: transaction latency,
   failure/replay/redelivery counters, reconciliation-mismatch gauges, saga-compensation and
   FX-quote-failure counters.
+- **External payment-rail simulation**: webhook deduplication at three layers, saga-style
+  compensation on withdrawal failure/timeout, and out-of-order-confirmation handling via
+  retryable rejection rather than a placeholder-state machine.
 
 ## Architecture
 
-Five Spring Boot microservices, database-per-service, fronted by an API Gateway:
+Six Spring Boot microservices, database-per-service, fronted by an API Gateway:
 
 - **API Gateway** (`:8080`) — the platform's single client-facing entry point. Routes
   `/transactions/**`, `/reconciliation/**`, `/accounts/**`, `/wallets/**`, and
   `/transfers/**` to Ledger Service; `/holds/**` and `/accounts/*/available-balance` to
   Holds Service (the more specific `available-balance` route is declared before the general
-  `/accounts/**` route, so it still reaches Holds Service rather than Ledger Service); and
-  `/rates/**` / `/conversions/**` to FX Service. Validates JWTs as an OAuth2 resource
-  server; no unauthenticated request reaches a downstream service.
+  `/accounts/**` route, so it still reaches Holds Service rather than Ledger Service);
+  `/rates/**` / `/conversions/**` to FX Service; and `/webhooks/**`, `/simulator/**`,
+  `/external-deposits/**`, `/external-withdrawals/**` to Gateway Simulator. Validates JWTs
+  as an OAuth2 resource server; no unauthenticated request reaches a downstream service.
 - **Ledger Service** (`:8090`) — owns accounts, transactions, entries, and the outbox. No
   longer directly client-facing in V2+ — all client traffic goes through the gateway. In V3
   it also owns multi-currency accounts (grouped into wallets via `accountGroupId`) and the
@@ -68,10 +76,39 @@ Five Spring Boot microservices, database-per-service, fronted by an API Gateway:
 - **FX Service** (`:8083`) — syncs exchange rates from Frankfurter (a free, ECB-backed,
   no-API-key-required rate source) on an hourly schedule, and serves rate lookups and
   conversion quotes used by Ledger Service's cross-currency transfer saga.
+- **Gateway Simulator** (`:8084`) — models an external payment rail, the platform's only
+  component simulating a real trust boundary and its inherent unreliability (duplicate
+  deliveries, out-of-order confirmations, requests that never resolve). Handles two flows:
+  - **Inbound deposits**: `POST /webhooks/deposits` is the simulated trust-boundary
+    endpoint — it upserts a `webhook_dedup` row keyed by `externalReference` to detect
+    redelivery, then (on first delivery only) calls `POST /transactions` on the API
+    Gateway, crediting the target account and debiting an `external-clearing-{currency}`
+    account, with a deterministic `Idempotency-Key` as a second line of defense.
+    `POST /simulator/deposits` is a control-plane convenience that originates a deposit
+    in-process for demos/chaos scripts without hand-crafting a webhook payload.
+  - **Outbound withdrawals**: a `WITHDRAWAL_EXTERNAL` transaction posted through the normal
+    `POST /transactions` path is picked up asynchronously off the existing
+    `ledger.transaction.posted` RabbitMQ topic; Gateway Simulator records it `SUBMITTED`
+    and waits for resolution, which always arrives later via
+    `POST /simulator/withdrawals/{id}/confirm` (standing in for the rail's own async
+    callback) or via a scheduled sweep that marks a stuck `SUBMITTED` row `TIMED_OUT` after
+    a configurable timeout. Both a `FAILED` confirmation and a `TIMED_OUT` sweep trigger the
+    same saga-style compensating reversal — a second `POST /transactions` call debiting the
+    clearing account and crediting the original account back, with its own deterministic
+    idempotency key. A confirm call that arrives before the `SUBMITTED` row exists (a race
+    with the transaction event still in flight) gets a retryable `409` rather than a new
+    placeholder-state machine.
+
+  Like `TransactionPoster`'s existing synchronous Holds Service check, both
+  `DepositService.handleWebhook` and `WithdrawalResolutionService.reverse` make a blocking
+  `POST /transactions` call to the API Gateway while holding a local DB transaction open on
+  Gateway Simulator's own database — the same deliberate lock-duration-vs-atomicity tradeoff
+  already documented for the Holds Service check below, applied a second time at this new
+  trust boundary.
 - **Keycloak** (`:8180`, `ledger` realm) — the auth provider. Issues JWTs for the
   client-credentials and password grants above; the API Gateway validates tokens against
   it.
-- **Prometheus** (`:9090`) — scrapes `/actuator/prometheus` from all 5 Spring Boot services
+- **Prometheus** (`:9090`) — scrapes `/actuator/prometheus` from all 6 Spring Boot services
   and stores the resulting metrics.
 - **Grafana** (`:3000`) — dashboards over Prometheus's data; anonymous viewer access is
   enabled for local/demo convenience (see "Known limitations").
@@ -95,17 +132,34 @@ for how V1 and V2 were built.
 ```bash
 make up            # builds and starts all containers, then provisions Toxiproxy + CDC
 make smoke-test     # posts a transaction and a hold end-to-end and verifies reconciliation is clean
-make chaos-test     # runs all 5 chaos scenarios
+make chaos-test     # runs chaos scenarios 01-05; run 06-09 directly, see below
 make down           # tears down and removes volumes
 ```
+
+`scripts/smoke-test.sh` also exercises a full Gateway Simulator round trip: a simulated
+deposit credited end-to-end, then a `WITHDRAWAL_EXTERNAL` transaction failed via the confirm
+endpoint and verified to reverse back to the correct balance.
+
+`make chaos-test` currently wires up only the original 5 scenarios; the 4 added since (V3's
+`06_fx_saga_crash_mid_leg.sh` and V5's `07_duplicate_webhook.sh`,
+`08_withdrawal_timeout_sweep.sh`, `09_out_of_order_confirmation.sh`) are run directly:
+
+```bash
+for s in chaos/scenarios/*.sh; do bash "$s" || break; done
+```
+
+Gateway Simulator is reachable directly at `http://localhost:8084` for local debugging, or
+through the gateway's `/webhooks/**`, `/simulator/**`, `/external-deposits/**`, and
+`/external-withdrawals/**` routes like every other client-facing path.
 
 Grafana is reachable at `http://localhost:3000` with anonymous viewer access — no login is
 needed to view the platform dashboard locally. Prometheus's own UI is reachable at
 `http://localhost:9090` for ad-hoc queries.
 
-`make up` runs `docker compose up -d --build` (now bringing up 14 containers: the V1 six
+`make up` runs `docker compose up -d --build` (now bringing up 16 containers: the V1 six
 plus `holds-db`, `holds-service`, `keycloak`, `api-gateway`, `fx-db`, `fx-service`,
-`prometheus`, and `grafana`) followed by `scripts/provision.sh`, which configures the Toxiproxy proxies and the Debezium
+`prometheus`, `grafana`, `gateway-sim-db`, and `gateway-simulator`) followed by
+`scripts/provision.sh`, which configures the Toxiproxy proxies and the Debezium
 CDC grant/publication that the stack needs to actually work (see `scripts/provision.sh` for
 why these can't be baked into the compose file or Postgres init scripts) — this part of the
 flow is unchanged from V1. `provision.sh` now also calls `scripts/seed-clearing-accounts.sh`,
@@ -141,16 +195,16 @@ curl -X POST http://localhost:8080/holds \
 ## Running tests
 
 ```bash
-mvn clean verify    # unit + Testcontainers integration tests across all five modules
+mvn clean verify    # unit + Testcontainers integration tests across all six modules
 ```
 
 ## API
 
 All endpoints below are reached through the **API Gateway** at `http://localhost:8080` and
 require an `Authorization: Bearer <token>` header (see "Getting a token" above). Ledger
-Service's own port (`:8090`), Holds Service's own port (`:8082`), and FX Service's own port
-(`:8083`) are internal — reachable directly on the host for local debugging, but not the
-intended client path.
+Service's own port (`:8090`), Holds Service's own port (`:8082`), FX Service's own port
+(`:8083`), and Gateway Simulator's own port (`:8084`) are internal — reachable directly on
+the host for local debugging, but not the intended client path.
 
 The new V3 endpoints are split across two services. `POST /accounts`,
 `GET /wallets/{groupId}/accounts`, and `POST /transfers/cross-currency` are all owned and
@@ -232,13 +286,61 @@ historical rate as of that time instead.
 (amount, rate, and an `expiresAt`) for a given source amount/currency and destination
 currency, for use by a caller composing its own transfer logic.
 
+The new V5 endpoints are all owned and served by **Gateway Simulator**.
+
+`POST /simulator/deposits` — control-plane trigger for demos/chaos scripts: originates a
+simulated inbound deposit in-process (no separate webhook round-trip) and credits the given
+account.
+
+```bash
+curl -X POST http://localhost:8080/simulator/deposits \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"accountRef":"alice-usd","amountMinor":5000,"currency":"USD"}'
+```
+
+`POST /webhooks/deposits` — the actual simulated trust-boundary endpoint modeling an
+inbound webhook from an external payment rail. Deduplicates redelivery of the same
+`externalReference` before crediting the target account via a downstream
+`POST /transactions` call. See "Known limitations" for the webhook-auth simplification.
+
+`GET /external-deposits/{externalReference}` — fetches a simulated deposit's current
+status (`RECEIVED`, `CREDITED`, or `REJECTED`) for polling/demos.
+
+`POST /simulator/withdrawals/{id}/confirm` — control-plane endpoint resolving a pending
+`WITHDRAWAL_EXTERNAL` withdrawal, standing in for the rail's own async callback.
+`{"outcome":"CONFIRMED"}` finalizes it with no further ledger action;
+`{"outcome":"FAILED"}` triggers a compensating reversal transaction. Returns `409` if the
+withdrawal hasn't reached `SUBMITTED` status yet (a race with the triggering transaction
+event still in flight) — the caller is expected to retry after a short delay. `{id}` may be
+either Gateway Simulator's own internal withdrawal id or the original transaction's id
+(`POST /simulator/withdrawals/by-transaction/{transactionId}/confirm`).
+
+```bash
+curl -X POST http://localhost:8080/simulator/withdrawals/{id}/confirm \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"outcome":"FAILED"}'
+```
+
+`GET /external-withdrawals/{id}` — fetches a simulated withdrawal's current status
+(`SUBMITTED`, `CONFIRMED`, `FAILED`, `TIMED_OUT`, or `REVERSED`) for polling/demos.
+
+An external withdrawal itself is triggered with no dedicated initiation endpoint — post an
+ordinary transaction through the existing `POST /transactions` with
+`"transactionType":"WITHDRAWAL_EXTERNAL"`, debiting the customer's account and crediting
+`external-clearing-{currency}`; Gateway Simulator picks it up asynchronously off the
+`ledger.transaction.posted` event stream.
+
 ## Known limitations
 
 **Carried over from V1:**
 
 - Single-instance Transaction Processor only — the embedded Debezium engine holds an
   exclusive Postgres replication slot. Horizontal scaling is out of scope for V1/V2.
-- No fees or external payment simulation yet — those are V4/V5 of the full platform spec.
+- No fee simulation — Fees Service (V4 of the full platform spec) is permanently out of
+  scope, per an explicit scoping decision, not merely "not yet built." External payment
+  simulation (V5) is now implemented — see "New in V5" below.
 - Write-path only for the ledger itself — there is no `GET /transactions/{id}`. Accounts are
   seeded directly via SQL (see `scripts/smoke-test.sh` and the `chaos/` scripts) rather than
   through an API, since account provisioning is out of scope for V1/V2.
@@ -294,3 +396,17 @@ currency, for use by a caller composing its own transfer logic.
   with no login required, which is appropriate only for local/demo use — it is not a
   production-safe configuration and would need real authentication before being exposed
   beyond a local machine.
+
+**New in V5:**
+
+- **`POST /webhooks/deposits` uses this platform's own OAuth2 auth, not a real
+  webhook-signature scheme**: a real payment rail would authenticate its webhook calls
+  independently of your application's own auth (e.g. a shared secret or a signed payload),
+  not with a bearer token issued by your own Keycloak realm. Modeling that is explicitly out
+  of scope per the V5 design spec — this is a deliberate simplification of the simulated
+  trust boundary, not an oversight.
+- **Short withdrawal timeout**: the window Gateway Simulator waits for a withdrawal
+  confirmation before its sweep marks it `TIMED_OUT` and reverses it defaults to 60 seconds
+  (`gateway-sim.withdrawal-timeout-seconds`, configurable). A real payment rail's settlement
+  window would typically be much longer; 60 seconds is appropriate for a demo/chaos-test
+  platform where scenarios need to complete quickly, not for a production integration.

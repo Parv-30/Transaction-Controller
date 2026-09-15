@@ -4,6 +4,7 @@ import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
 import com.ledger.ledgerservice.domain.Account;
 import com.ledger.ledgerservice.domain.AccountStatus;
+import com.ledger.ledgerservice.domain.Transaction;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.OutboxRepository;
@@ -255,6 +256,26 @@ class TransactionServiceIntegrationTest {
     }
 
     @Test
+    void externalClearingAccountsSkipTheHeldBalanceCheckEntirely() {
+        // Same guarantee as fx-clearing-, extended to external-clearing- accounts used by the
+        // Gateway Simulator's deposit/withdrawal/reversal postings against a suspense account.
+        stubbedHeldBalance.set(Long.MAX_VALUE / 2);
+
+        accountRepository.save(new Account(UUID.randomUUID(), "external-clearing-USD",
+                "External clearing USD", "USD", 1_000_000L, AccountStatus.ACTIVE, null));
+
+        var response = transactionService.postTransaction(
+                new CreateTransactionRequest("external-clearing-USD", "acct-a", 5_000L, "USD",
+                        "reversal test", "WITHDRAWAL_EXTERNAL"),
+                "clearing-check-key-1");
+
+        assertThat(response.status()).isEqualTo("POSTED");
+        Account credited = accountRepository.findByAccountRef("acct-a").orElseThrow();
+        assertThat(credited.getBalanceMinor()).isEqualTo(15_000L);
+        stubbedHeldBalance.set(0L);
+    }
+
+    @Test
     void postingATransactionRecordsATransactionLatencyTimer() {
         transactionService.postTransaction(
                 new CreateTransactionRequest("acct-a", "acct-b", 100L, "USD", "metrics test"),
@@ -291,5 +312,25 @@ class TransactionServiceIntegrationTest {
         assertThat(replayResponse.replay()).isTrue();
         double after = meterRegistry.find("ledger.idempotency.replay").counter().count();
         assertThat(after).isEqualTo(before + 1.0);
+    }
+
+    @Test
+    void postingWithoutTransactionTypeDefaultsToTransfer() {
+        CreateTransactionRequest request = new CreateTransactionRequest(
+                "acct-a", "acct-b", 500L, "USD", "no type specified");
+        TransactionResponse response = transactionService.postTransaction(request, "txtype-default-key-1");
+
+        Transaction saved = transactionRepository.findById(response.transactionId()).orElseThrow();
+        assertThat(saved.getTransactionType()).isEqualTo("TRANSFER");
+    }
+
+    @Test
+    void postingWithExplicitTransactionTypePersistsIt() {
+        CreateTransactionRequest request = new CreateTransactionRequest(
+                "acct-a", "acct-b", 500L, "USD", "withdrawal", "WITHDRAWAL_EXTERNAL");
+        TransactionResponse response = transactionService.postTransaction(request, "txtype-explicit-key-1");
+
+        Transaction saved = transactionRepository.findById(response.transactionId()).orElseThrow();
+        assertThat(saved.getTransactionType()).isEqualTo("WITHDRAWAL_EXTERNAL");
     }
 }

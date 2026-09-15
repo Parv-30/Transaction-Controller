@@ -1,0 +1,12 @@
+# chaos/docker-compose.chaos-override.yml
+#
+# Chaos-suite-only override: shortens Gateway Simulator's withdrawal timeout so scenario 08
+# (withdrawal timeout sweep) completes in reasonable chaos-suite time instead of waiting out the
+# 60s production default from gateway-simulator/src/main/resources/application.yml (Task 4).
+# Applied by chaos/scenarios/08_withdrawal_timeout_sweep.sh restarting just the
+# gateway-simulator service with this override layered on top of the base docker-compose.yml --
+# it is never used by `docker compose up` on its own and never changes the production default.
+services:
+  gateway-simulator:
+    environment:
+      GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS: "10"
