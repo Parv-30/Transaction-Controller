@@ -5,6 +5,7 @@ import com.ledger.gatewaysimulator.api.dto.DepositWebhookRequest;
 import com.ledger.gatewaysimulator.domain.DepositStatus;
 import com.ledger.gatewaysimulator.domain.ExternalDeposit;
 import com.ledger.gatewaysimulator.domain.WebhookDedup;
+import com.ledger.gatewaysimulator.ledger.LedgerServiceUnavailableException;
 import com.ledger.gatewaysimulator.ledger.LedgerTransactionClient;
 import com.ledger.gatewaysimulator.repository.ExternalDepositRepository;
 import com.ledger.gatewaysimulator.repository.WebhookDedupRepository;
@@ -12,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 import java.util.UUID;
 
@@ -77,7 +79,7 @@ public class DepositService {
                     request.amountMinor(), request.currency(), "simulated external deposit",
                     "external-deposit-" + request.externalReference());
             deposit.markCredited(transactionId);
-        } catch (Exception rejected) {
+        } catch (RestClientException | LedgerServiceUnavailableException rejected) {
             deposit.markRejected();
             meterRegistry.counter("gateway_sim.deposit.rejected").increment();
         }
