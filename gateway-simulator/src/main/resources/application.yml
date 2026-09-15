@@ -24,6 +24,8 @@ gateway-sim:
   withdrawal-timeout-seconds: ${GATEWAY_SIM_WITHDRAWAL_TIMEOUT_SECONDS:60}
   withdrawal-sweep:
     interval-ms: ${GATEWAY_SIM_WITHDRAWAL_SWEEP_INTERVAL_MS:15000}
+  outbox-poll:
+    interval-ms: ${GATEWAY_SIM_OUTBOX_POLL_INTERVAL_MS:2000}
 
 ledger:
   base-url: ${LEDGER_SERVICE_URL:http://localhost:8090}
