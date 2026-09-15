@@ -4,6 +4,7 @@ import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
 import com.ledger.ledgerservice.domain.Account;
 import com.ledger.ledgerservice.domain.AccountStatus;
+import com.ledger.ledgerservice.domain.Transaction;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.OutboxRepository;
@@ -291,5 +292,25 @@ class TransactionServiceIntegrationTest {
         assertThat(replayResponse.replay()).isTrue();
         double after = meterRegistry.find("ledger.idempotency.replay").counter().count();
         assertThat(after).isEqualTo(before + 1.0);
+    }
+
+    @Test
+    void postingWithoutTransactionTypeDefaultsToTransfer() {
+        CreateTransactionRequest request = new CreateTransactionRequest(
+                "acct-a", "acct-b", 500L, "USD", "no type specified");
+        TransactionResponse response = transactionService.postTransaction(request, "txtype-default-key-1");
+
+        Transaction saved = transactionRepository.findById(response.transactionId()).orElseThrow();
+        assertThat(saved.getTransactionType()).isEqualTo("TRANSFER");
+    }
+
+    @Test
+    void postingWithExplicitTransactionTypePersistsIt() {
+        CreateTransactionRequest request = new CreateTransactionRequest(
+                "acct-a", "acct-b", 500L, "USD", "withdrawal", "WITHDRAWAL_EXTERNAL");
+        TransactionResponse response = transactionService.postTransaction(request, "txtype-explicit-key-1");
+
+        Transaction saved = transactionRepository.findById(response.transactionId()).orElseThrow();
+        assertThat(saved.getTransactionType()).isEqualTo("WITHDRAWAL_EXTERNAL");
     }
 }

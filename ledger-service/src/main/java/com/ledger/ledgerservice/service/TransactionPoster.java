@@ -141,7 +141,7 @@ public class TransactionPoster {
 
         UUID transactionId = UUID.randomUUID();
         Transaction transaction = new Transaction(transactionId, idempotencyKey, TransactionStatus.POSTED,
-                "TRANSFER", request.description(), requestHash);
+                request.transactionType(), request.description(), requestHash);
 
         transactionRepository.saveAndFlush(transaction);
 
@@ -195,7 +195,8 @@ public class TransactionPoster {
                     "currency", request.currency(),
                     "debitAccountBalanceAfter", debitAccount.getBalanceMinor(),
                     "creditAccountBalanceAfter", creditAccount.getBalanceMinor(),
-                    "occurredAt", Instant.now().toString()
+                    "occurredAt", Instant.now().toString(),
+                    "transactionType", transaction.getTransactionType()
             ));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to serialize outbox payload", e);
