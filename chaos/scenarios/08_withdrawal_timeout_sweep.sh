@@ -12,6 +12,12 @@ echo "wait out the 60s production default) ..."
 docker compose -f "$SCRIPT_DIR/../../docker-compose.yml" -f "$SCRIPT_DIR/../docker-compose.chaos-override.yml" \
   up -d gateway-simulator
 
+restore_gateway_simulator_defaults() {
+  echo "Restoring gateway-simulator to its production config (removing the chaos-only timeout override)..."
+  docker compose -f "$SCRIPT_DIR/../../docker-compose.yml" up -d gateway-simulator > /dev/null 2>&1 || true
+}
+trap restore_gateway_simulator_defaults EXIT
+
 echo "Waiting for gateway-simulator to be healthy after the restart..."
 for i in $(seq 1 30); do
   if curl -sf http://localhost:8084/actuator/health > /dev/null 2>&1; then
