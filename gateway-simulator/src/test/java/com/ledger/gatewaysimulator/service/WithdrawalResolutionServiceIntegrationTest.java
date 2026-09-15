@@ -1,5 +1,7 @@
 package com.ledger.gatewaysimulator.service;
 
+import com.ledger.gatewaysimulator.api.dto.ConfirmWithdrawalRequest;
+import com.ledger.gatewaysimulator.api.dto.WithdrawalResponse;
 import com.ledger.gatewaysimulator.api.error.WithdrawalNotYetSubmittedException;
 import com.ledger.gatewaysimulator.domain.ExternalWithdrawal;
 import com.ledger.gatewaysimulator.domain.WithdrawalStatus;
@@ -9,6 +11,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -28,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 class WithdrawalResolutionServiceIntegrationTest {
 
@@ -85,6 +90,10 @@ class WithdrawalResolutionServiceIntegrationTest {
     private WithdrawalResolutionService resolutionService;
     @Autowired
     private ExternalWithdrawalRepository withdrawalRepository;
+    @Autowired
+    private TestRestTemplate restTemplate;
+    @LocalServerPort
+    private int port;
 
     private ExternalWithdrawal seedSubmittedWithdrawal(String accountRef, long amountMinor, String currency) {
         ExternalWithdrawal withdrawal = new ExternalWithdrawal(
@@ -156,5 +165,38 @@ class WithdrawalResolutionServiceIntegrationTest {
         assertThat(stubLedgerIdempotencyKeys.get(0)).isEqualTo(stubLedgerIdempotencyKeys.get(1));
         assertThat(stubLedgerIdempotencyKeys.get(0))
                 .isEqualTo("external-withdrawal-reversal-" + sourceTransactionId);
+    }
+
+    @Test
+    void confirmingByAnUnknownSourceTransactionIdReturns409() {
+        UUID unknownSourceTransactionId = UUID.randomUUID();
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "http://localhost:" + port + "/simulator/withdrawals/by-transaction/"
+                        + unknownSourceTransactionId + "/confirm",
+                new ConfirmWithdrawalRequest("CONFIRMED"), String.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+    }
+
+    @Test
+    void confirmingByAKnownSourceTransactionIdSucceedsIdenticallyToConfirmingByInternalId() {
+        ExternalWithdrawal seeded = seedSubmittedWithdrawal("acct-w-4", 6_000L, "USD");
+        UUID sourceTransactionId = seeded.getSourceTransactionId();
+
+        ResponseEntity<WithdrawalResponse> response = restTemplate.postForEntity(
+                "http://localhost:" + port + "/simulator/withdrawals/by-transaction/"
+                        + sourceTransactionId + "/confirm",
+                new ConfirmWithdrawalRequest("CONFIRMED"), WithdrawalResponse.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        WithdrawalResponse body = response.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.id()).isEqualTo(seeded.getId());
+        assertThat(body.status()).isEqualTo("CONFIRMED");
+        assertThat(body.reversalTransactionId()).isNull();
+
+        ExternalWithdrawal persisted = withdrawalRepository.findById(seeded.getId()).orElseThrow();
+        assertThat(persisted.getStatus()).isEqualTo(WithdrawalStatus.CONFIRMED);
     }
 }

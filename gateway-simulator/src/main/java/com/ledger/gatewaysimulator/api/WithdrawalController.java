@@ -3,6 +3,7 @@ package com.ledger.gatewaysimulator.api;
 import com.ledger.gatewaysimulator.api.dto.ConfirmWithdrawalRequest;
 import com.ledger.gatewaysimulator.api.dto.WithdrawalResponse;
 import com.ledger.gatewaysimulator.api.error.WithdrawalNotFoundException;
+import com.ledger.gatewaysimulator.api.error.WithdrawalNotYetSubmittedException;
 import com.ledger.gatewaysimulator.domain.ExternalWithdrawal;
 import com.ledger.gatewaysimulator.repository.ExternalWithdrawalRepository;
 import com.ledger.gatewaysimulator.service.WithdrawalResolutionService;
@@ -32,6 +33,26 @@ public class WithdrawalController {
                                                         @RequestBody ConfirmWithdrawalRequest request) {
         ExternalWithdrawal withdrawal = resolutionService.confirm(id, request.outcome());
         return ResponseEntity.ok(toResponse(withdrawal));
+    }
+
+    /**
+     * Confirms a withdrawal by its {@code sourceTransactionId} rather than Gateway Simulator's own
+     * internal {@code id} -- the internal id is generated inside
+     * {@code WithdrawalSubmissionService.submit()} only after the RabbitMQ-driven consumption of
+     * the withdrawal event has happened, so it is not knowable to an external caller immediately
+     * after posting the transaction. {@code sourceTransactionId} is returned directly by
+     * {@code POST /transactions} and is known right away, making this the only lookup key that
+     * lets a caller race a confirmation attempt against that consumption (see chaos scenario 9).
+     * Delegates to {@link #confirm(UUID, ConfirmWithdrawalRequest)} once the row is found, so it
+     * inherits the exact same 409-on-not-yet-submitted behavior with no duplicated logic.
+     */
+    @PostMapping("/simulator/withdrawals/by-transaction/{sourceTransactionId}/confirm")
+    public ResponseEntity<WithdrawalResponse> confirmByTransactionId(
+            @PathVariable("sourceTransactionId") UUID sourceTransactionId,
+            @RequestBody ConfirmWithdrawalRequest request) {
+        ExternalWithdrawal withdrawal = withdrawalRepository.findBySourceTransactionId(sourceTransactionId)
+                .orElseThrow(() -> new WithdrawalNotYetSubmittedException(sourceTransactionId));
+        return confirm(withdrawal.getId(), request);
     }
 
     @GetMapping("/external-withdrawals/{id}")
