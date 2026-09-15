@@ -256,6 +256,26 @@ class TransactionServiceIntegrationTest {
     }
 
     @Test
+    void externalClearingAccountsSkipTheHeldBalanceCheckEntirely() {
+        // Same guarantee as fx-clearing-, extended to external-clearing- accounts used by the
+        // Gateway Simulator's deposit/withdrawal/reversal postings against a suspense account.
+        stubbedHeldBalance.set(Long.MAX_VALUE / 2);
+
+        accountRepository.save(new Account(UUID.randomUUID(), "external-clearing-USD",
+                "External clearing USD", "USD", 1_000_000L, AccountStatus.ACTIVE, null));
+
+        var response = transactionService.postTransaction(
+                new CreateTransactionRequest("external-clearing-USD", "acct-a", 5_000L, "USD",
+                        "reversal test", "WITHDRAWAL_EXTERNAL"),
+                "clearing-check-key-1");
+
+        assertThat(response.status()).isEqualTo("POSTED");
+        Account credited = accountRepository.findByAccountRef("acct-a").orElseThrow();
+        assertThat(credited.getBalanceMinor()).isEqualTo(15_000L);
+        stubbedHeldBalance.set(0L);
+    }
+
+    @Test
     void postingATransactionRecordsATransactionLatencyTimer() {
         transactionService.postTransaction(
                 new CreateTransactionRequest("acct-a", "acct-b", 100L, "USD", "metrics test"),
