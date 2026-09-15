@@ -54,7 +54,11 @@ public class WithdrawalTimeoutSweep {
                 meterRegistry.counter("gateway_sim.withdrawal.timeout").increment();
             } catch (Exception e) {
                 log.error("Failed to time out withdrawal {}: {}", withdrawal.getId(), e.getMessage(), e);
-                // continue sweeping the rest; a failed row is picked up again next run
+                // continue sweeping the rest. markTimedOutAndReverse is @Transactional and this
+                // exception is always an unchecked RuntimeException from the downstream
+                // postTransaction call, so Spring rolls back the whole transaction -- the row's
+                // status never durably becomes TIMED_OUT here, it stays SUBMITTED, and is
+                // naturally retried by the next sweep run's own query.
             }
         }
     }

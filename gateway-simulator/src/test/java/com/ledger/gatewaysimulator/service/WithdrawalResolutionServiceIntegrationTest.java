@@ -42,6 +42,7 @@ class WithdrawalResolutionServiceIntegrationTest {
     static HttpServer stubLedgerService;
     static AtomicInteger stubLedgerRequestCount = new AtomicInteger(0);
     static List<String> stubLedgerIdempotencyKeys = new CopyOnWriteArrayList<>();
+    static List<String> stubLedgerRequestBodies = new CopyOnWriteArrayList<>();
 
     @DynamicPropertySource
     static void registerProps(DynamicPropertyRegistry registry) {
@@ -58,6 +59,7 @@ class WithdrawalResolutionServiceIntegrationTest {
             stubLedgerService.createContext("/transactions", exchange -> {
                 stubLedgerRequestCount.incrementAndGet();
                 stubLedgerIdempotencyKeys.add(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
+                stubLedgerRequestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String body = "{\"transactionId\":\"" + UUID.randomUUID() + "\",\"status\":\"POSTED\"}";
                 byte[] response = body.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -76,6 +78,7 @@ class WithdrawalResolutionServiceIntegrationTest {
     void resetStub() {
         stubLedgerRequestCount.set(0);
         stubLedgerIdempotencyKeys.clear();
+        stubLedgerRequestBodies.clear();
     }
 
     @Autowired
@@ -126,6 +129,13 @@ class WithdrawalResolutionServiceIntegrationTest {
         ExternalWithdrawal persisted = withdrawalRepository.findById(seeded.getId()).orElseThrow();
         assertThat(persisted.getStatus()).isEqualTo(WithdrawalStatus.REVERSED);
         assertThat(persisted.getReversalTransactionId()).isEqualTo(resolved.getReversalTransactionId());
+
+        assertThat(stubLedgerRequestBodies).hasSize(1);
+        String requestBody = stubLedgerRequestBodies.get(0);
+        assertThat(requestBody).contains("\"debitAccountRef\":\"external-clearing-EUR\"");
+        assertThat(requestBody).contains("\"creditAccountRef\":\"acct-w-2\"");
+        assertThat(requestBody).contains("\"amountMinor\":2500");
+        assertThat(requestBody).contains("\"currency\":\"EUR\"");
     }
 
     @Test
