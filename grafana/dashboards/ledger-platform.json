@@ -1,0 +1,142 @@
+{
+  "id": null,
+  "uid": "ledger-platform",
+  "title": "Ledger Platform",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Transaction Latency (ledger-service)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(ledger_transaction_latency_seconds_sum[1m]) / rate(ledger_transaction_latency_seconds_count[1m])",
+          "legendFormat": "avg latency"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Transaction Failures (by exception)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(ledger_transaction_failed_total[5m])",
+          "legendFormat": "{{exception}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Idempotency Replays (all services)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(ledger_idempotency_replay_total[5m])",
+          "legendFormat": "ledger-service transactions"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(holds_idempotency_replay_total[5m])",
+          "legendFormat": "holds-service holds"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(ledger_fx_transfer_idempotency_replay_total[5m])",
+          "legendFormat": "ledger-service FX transfers"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "RabbitMQ Message Redelivery",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(processor_rabbitmq_redelivery_total[5m])",
+          "legendFormat": "transaction-processor"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(holds_rabbitmq_redelivery_total[5m])",
+          "legendFormat": "holds-service"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Reconciliation Health",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "ledger_reconciliation_entries_imbalance",
+          "legendFormat": "entries imbalance"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "ledger_reconciliation_outbox_missing",
+          "legendFormat": "outbox missing"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "ledger_reconciliation_outbox_stuck",
+          "legendFormat": "outbox stuck"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "FX Saga Compensations",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(ledger_fx_saga_compensation_total[5m])",
+          "legendFormat": "compensations"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "FX Quote Failures",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(fx_quote_failure_total[5m])",
+          "legendFormat": "fx-service (no rate available)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "rate(ledger_fx_quote_failure_total[5m])",
+          "legendFormat": "ledger-service (client-side, incl. network failures)"
+        }
+      ]
+    }
+  ]
+}

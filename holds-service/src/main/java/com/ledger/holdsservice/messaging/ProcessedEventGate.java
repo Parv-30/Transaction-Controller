@@ -1,5 +1,6 @@
 package com.ledger.holdsservice.messaging;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -16,9 +17,11 @@ import java.util.UUID;
 public class ProcessedEventGate {
 
     private final JdbcTemplate jdbcTemplate;
+    private final MeterRegistry meterRegistry;
 
-    public ProcessedEventGate(JdbcTemplate jdbcTemplate) {
+    public ProcessedEventGate(JdbcTemplate jdbcTemplate, MeterRegistry meterRegistry) {
         this.jdbcTemplate = jdbcTemplate;
+        this.meterRegistry = meterRegistry;
     }
 
     @Transactional
@@ -27,6 +30,7 @@ public class ProcessedEventGate {
             jdbcTemplate.update("INSERT INTO processed_events (event_id) VALUES (?)", eventId);
             return true;
         } catch (DataIntegrityViolationException duplicateKey) {
+            meterRegistry.counter("holds.rabbitmq.redelivery").increment();
             return false;
         }
     }

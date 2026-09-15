@@ -28,3 +28,15 @@ fx:
     stuck-threshold-ms: ${FX_TRANSFER_STUCK_THRESHOLD_MS:30000}
 reconciliation:
   interval-ms: ${RECONCILIATION_INTERVAL_MS:300000}
+holds:
+  base-url: ${HOLDS_SERVICE_URL:http://localhost:8082}
+  held-balance-timeout-ms: ${HOLDS_HELD_BALANCE_TIMEOUT_MS:2000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health
+  metrics:
+    tags:
+      application: ${spring.application.name}

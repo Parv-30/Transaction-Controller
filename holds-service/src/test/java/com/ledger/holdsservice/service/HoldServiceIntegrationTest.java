@@ -47,6 +47,8 @@ class HoldServiceIntegrationTest {
     private AccountBalanceCacheRepository accountBalanceCacheRepository;
     @Autowired
     private OutboxRepository outboxRepository;
+    @Autowired
+    private io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     @BeforeEach
     void seedBalance() {
@@ -82,6 +84,20 @@ class HoldServiceIntegrationTest {
 
         AccountBalanceCache cache = accountBalanceCacheRepository.findById("acct-holds-a").orElseThrow();
         assertThat(cache.getHeldBalanceMinor()).isEqualTo(2_000L);
+    }
+
+    @Test
+    void retryingTheSameIdempotencyKeyIncrementsTheReplayCounter() {
+        var request = new CreateHoldRequest("acct-holds-a", "acct-merchant", 1_000L, "USD", 3600);
+        holdService.createHold(request, "hold-key-metrics-1");
+        double before = meterRegistry.find("holds.idempotency.replay").counter() == null
+                ? 0.0 : meterRegistry.find("holds.idempotency.replay").counter().count();
+
+        HoldResponse replay = holdService.createHold(request, "hold-key-metrics-1");
+
+        assertThat(replay.replay()).isTrue();
+        double after = meterRegistry.find("holds.idempotency.replay").counter().count();
+        assertThat(after).isEqualTo(before + 1.0);
     }
 
     @Test

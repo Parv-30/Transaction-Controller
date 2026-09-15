@@ -34,6 +34,9 @@ public class PendingFxTransfer {
     @Column(name = "dest_amount_minor", nullable = false)
     private long destAmountMinor;
 
+    @Column(name = "expires_at", nullable = false)
+    private Instant expiresAt;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PendingFxTransferStatus status;
@@ -63,7 +66,7 @@ public class PendingFxTransfer {
 
     public PendingFxTransfer(UUID id, String idempotencyKey, UUID quoteId, String sourceAccountRef,
                              String destAccountRef, long sourceAmountMinor, BigDecimal rateUsed,
-                             long destAmountMinor) {
+                             long destAmountMinor, Instant expiresAt) {
         this.id = id;
         this.idempotencyKey = idempotencyKey;
         this.quoteId = quoteId;
@@ -72,6 +75,7 @@ public class PendingFxTransfer {
         this.sourceAmountMinor = sourceAmountMinor;
         this.rateUsed = rateUsed;
         this.destAmountMinor = destAmountMinor;
+        this.expiresAt = expiresAt;
         this.status = PendingFxTransferStatus.PENDING;
     }
 
@@ -83,6 +87,7 @@ public class PendingFxTransfer {
     public long getSourceAmountMinor() { return sourceAmountMinor; }
     public BigDecimal getRateUsed() { return rateUsed; }
     public long getDestAmountMinor() { return destAmountMinor; }
+    public Instant getExpiresAt() { return expiresAt; }
     public PendingFxTransferStatus getStatus() { return status; }
     public UUID getLeg1TransactionId() { return leg1TransactionId; }
     public UUID getLeg2TransactionId() { return leg2TransactionId; }

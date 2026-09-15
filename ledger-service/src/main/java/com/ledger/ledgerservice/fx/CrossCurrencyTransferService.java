@@ -2,6 +2,7 @@ package com.ledger.ledgerservice.fx;
 
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.service.AccountNotFoundException;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -25,20 +26,24 @@ public class CrossCurrencyTransferService {
     private final PendingFxTransferRepository pendingFxTransferRepository;
     private final CrossCurrencyTransferPoster poster;
     private final AccountRepository accountRepository;
+    private final MeterRegistry meterRegistry;
 
     public CrossCurrencyTransferService(FxServiceClient fxServiceClient,
                                         PendingFxTransferRepository pendingFxTransferRepository,
                                         CrossCurrencyTransferPoster poster,
-                                        AccountRepository accountRepository) {
+                                        AccountRepository accountRepository,
+                                        MeterRegistry meterRegistry) {
         this.fxServiceClient = fxServiceClient;
         this.pendingFxTransferRepository = pendingFxTransferRepository;
         this.poster = poster;
         this.accountRepository = accountRepository;
+        this.meterRegistry = meterRegistry;
     }
 
     public PendingFxTransferResponse transfer(CreateCrossCurrencyTransferRequest request) {
         var existing = pendingFxTransferRepository.findByIdempotencyKey(request.idempotencyKey());
         if (existing.isPresent()) {
+            meterRegistry.counter("ledger.fx.transfer.idempotency.replay").increment();
             return toResponse(existing.get(), null);
         }
 
@@ -56,7 +61,7 @@ public class CrossCurrencyTransferService {
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), request.idempotencyKey(),
                 quote.quoteId(), request.sourceAccountRef(), request.destAccountRef(),
-                request.sourceAmountMinor(), quote.rateUsed(), destAmountMinor);
+                request.sourceAmountMinor(), quote.rateUsed(), destAmountMinor, quote.expiresAt());
         pendingFxTransferRepository.save(transfer);
 
         String failureMessage = null;

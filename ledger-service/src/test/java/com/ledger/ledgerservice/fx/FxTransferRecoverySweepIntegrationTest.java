@@ -3,6 +3,7 @@ package com.ledger.ledgerservice.fx;
 import com.ledger.ledgerservice.domain.Account;
 import com.ledger.ledgerservice.domain.AccountStatus;
 import com.ledger.ledgerservice.repository.AccountRepository;
+import com.ledger.ledgerservice.testsupport.StubHoldsService;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,12 +38,15 @@ class FxTransferRecoverySweepIntegrationTest {
             .withPassword("ledger");
 
     static HttpServer stubFxService;
+    static HttpServer stubHoldsService;
 
     @DynamicPropertySource
     static void registerProps(DynamicPropertyRegistry registry) throws Exception {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+
+        stubHoldsService = StubHoldsService.startAlwaysZero(registry);
 
         stubFxService = HttpServer.create(new InetSocketAddress(0), 0);
         stubFxService.createContext("/conversions/quote", exchange -> {
@@ -94,7 +98,7 @@ class FxTransferRecoverySweepIntegrationTest {
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), "sweep-test-1",
                 UUID.randomUUID(), "fx-sweep-source", "fx-sweep-dest", 10_000L,
-                new BigDecimal("0.92000000"), 9_200L);
+                new BigDecimal("0.92000000"), 9_200L, Instant.now().plusSeconds(60));
         pendingFxTransferRepository.save(transfer);
         poster.postLeg1(transfer.getId());
 
@@ -125,7 +129,7 @@ class FxTransferRecoverySweepIntegrationTest {
 
         PendingFxTransfer transfer = new PendingFxTransfer(UUID.randomUUID(), "sweep-test-2",
                 UUID.randomUUID(), "fx-sweep-comp-source", "fx-sweep-comp-dest", 5_000L,
-                new BigDecimal("0.92000000"), 4_600L);
+                new BigDecimal("0.92000000"), 4_600L, Instant.now().plusSeconds(60));
         pendingFxTransferRepository.save(transfer);
         poster.postLeg1(transfer.getId());
         // Simulate a crash inside compensate() itself: mark COMPENSATING but never finish,

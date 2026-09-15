@@ -37,6 +37,13 @@ transfers via a saga with automatic compensation.
 - **External rate integration** (Frankfurter, free ECB-backed API) with staleness detection
   and last-known-good fallback: rates are synced hourly and cached, so a temporary outage of
   the upstream rate provider doesn't stop quotes from being served.
+- **Cross-service atomicity for hold-aware transaction posting, with an explicit fail-closed
+  availability tradeoff**: `POST /transactions` now checks Holds Service's held balance
+  synchronously before posting, closing the previously-documented overdraw gap; if Holds
+  Service is unreachable the transaction is rejected rather than risking an overdraw.
+- **Prometheus + Grafana observability across all 5 services**: transaction latency,
+  failure/replay/redelivery counters, reconciliation-mismatch gauges, saga-compensation and
+  FX-quote-failure counters.
 
 ## Architecture
 
@@ -64,6 +71,18 @@ Five Spring Boot microservices, database-per-service, fronted by an API Gateway:
 - **Keycloak** (`:8180`, `ledger` realm) — the auth provider. Issues JWTs for the
   client-credentials and password grants above; the API Gateway validates tokens against
   it.
+- **Prometheus** (`:9090`) — scrapes `/actuator/prometheus` from all 5 Spring Boot services
+  and stores the resulting metrics.
+- **Grafana** (`:3000`) — dashboards over Prometheus's data; anonymous viewer access is
+  enabled for local/demo convenience (see "Known limitations").
+
+`POST /transactions` now atomically checks Holds Service's held balance before posting,
+closing the overdraw gap previously documented under "Known limitations": Ledger Service
+calls Holds Service synchronously as part of the transaction-posting path and rejects the
+transaction if the held amount would be exceeded. This introduces a deliberate fail-closed
+tradeoff — Ledger Service's write availability for `POST /transactions` now depends on
+Holds Service being reachable; if Holds Service is down, transactions are rejected rather
+than risking a silent overdraw. See "Known limitations" for the full tradeoff writeup.
 
 See [docs/superpowers/specs/2026-09-02-ledger-platform-architecture.md](docs/superpowers/specs/2026-09-02-ledger-platform-architecture.md)
 for the full platform design (V1-V5) and
@@ -80,9 +99,13 @@ make chaos-test     # runs all 5 chaos scenarios
 make down           # tears down and removes volumes
 ```
 
-`make up` runs `docker compose up -d --build` (now bringing up 12 containers: the V1 six
-plus `holds-db`, `holds-service`, `keycloak`, `api-gateway`, `fx-db`, and `fx-service`)
-followed by `scripts/provision.sh`, which configures the Toxiproxy proxies and the Debezium
+Grafana is reachable at `http://localhost:3000` with anonymous viewer access — no login is
+needed to view the platform dashboard locally. Prometheus's own UI is reachable at
+`http://localhost:9090` for ad-hoc queries.
+
+`make up` runs `docker compose up -d --build` (now bringing up 14 containers: the V1 six
+plus `holds-db`, `holds-service`, `keycloak`, `api-gateway`, `fx-db`, `fx-service`,
+`prometheus`, and `grafana`) followed by `scripts/provision.sh`, which configures the Toxiproxy proxies and the Debezium
 CDC grant/publication that the stack needs to actually work (see `scripts/provision.sh` for
 why these can't be baked into the compose file or Postgres init scripts) — this part of the
 flow is unchanged from V1. `provision.sh` now also calls `scripts/seed-clearing-accounts.sh`,
@@ -222,12 +245,22 @@ currency, for use by a caller composing its own transfer logic.
 
 **New in V2:**
 
-- **Overdraw gap**: a direct `POST /transactions` call bypassing Holds Service can still
-  overdraw an account that has active holds against it — Ledger Service's posted balance and
-  Holds Service's available-balance cache are separate, asynchronously-synced views, and
-  nothing at the transaction-posting path itself consults outstanding holds. Clients are
-  expected to use `GET /accounts/{accountRef}/available-balance` for spend-checks by
-  convention; this is a documented, accepted limitation rather than a bug.
+- **Overdraw gap — closed for the direct `POST /transactions` path**: a direct
+  `POST /transactions` call used to be able to overdraw an account that had active holds
+  against it, because Ledger Service's posted balance and Holds Service's available-balance
+  cache were separate, asynchronously-synced views that the transaction-posting path never
+  consulted. This hardening work closes that gap: `POST /transactions` now synchronously
+  checks Holds Service's held balance before posting, and a transaction that would overdraw
+  the account given its outstanding holds is rejected (`422`). The new limitation this
+  introduces is a cross-service coupling: Ledger Service's write availability for
+  `POST /transactions` now depends on Holds Service being reachable, and the failure mode is
+  deliberately fail-closed — if Holds Service can't be reached, the transaction is rejected
+  rather than risking a silent overdraw. As a secondary effect, the held-balance check runs
+  while `SELECT ... FOR UPDATE` row locks are held on both accounts; sustained Holds Service
+  slowness (not just outages) will increase lock contention on hot accounts under load,
+  though a bounded timeout (`holds.held-balance-timeout-ms`) caps the worst-case lock duration.
+  `GET /accounts/{accountRef}/available-balance` remains available for clients that want to
+  pre-check before attempting a transfer.
 - **Auth scope**: Keycloak in V2 covers the client-credentials grant (machine clients) and
   the password grant (demo users `alice`/`bob`) only. There is no browser login /
   authorization-code flow and no user self-registration.
@@ -241,9 +274,11 @@ currency, for use by a caller composing its own transfer logic.
 - **Limited currency coverage**: only USD, EUR, and GBP are seeded/configured. Frankfurter
   itself covers more currencies, but this project does no dynamic currency administration —
   adding a currency requires a code/config change.
-- **Quote staleness is detectable but not enforced**: `FxQuote` carries `expiresAt` and a
-  `stale` flag, but the cross-currency transfer saga does not check either — a locked quote
-  is used to post both legs even if it has gone stale by the time the second leg runs.
+- **Quote expiry — fixed, quote expiry is now enforced before leg 2**: `FxQuote` carries an
+  `expiresAt` timestamp; the cross-currency transfer saga now checks it immediately before
+  posting the second leg and fails the transfer (triggering compensation of the first leg)
+  if the locked quote has expired in the interim, rather than posting both legs against a
+  stale rate.
 - **Sub-minor-unit rounding is undocumented/untested**: conversion amounts are computed via
   `BigDecimal` and truncated with `longValue()`. For exchange rates that don't divide exactly
   into whole minor units, the truncation remainder is silently absorbed by the clearing
@@ -255,3 +290,7 @@ currency, for use by a caller composing its own transfer logic.
   are not real funded accounts, and `POST /accounts` rejects any client-supplied ref with
   that prefix specifically to prevent a client from creating one and exploiting the
   overdraft exemption to mint money.
+- **Grafana anonymous-viewer access**: Grafana is configured for anonymous viewer access
+  with no login required, which is appropriate only for local/demo use — it is not a
+  production-safe configuration and would need real authentication before being exposed
+  beyond a local machine.

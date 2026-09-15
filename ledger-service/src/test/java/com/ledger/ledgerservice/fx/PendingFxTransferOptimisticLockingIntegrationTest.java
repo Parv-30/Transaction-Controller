@@ -14,6 +14,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,7 +71,8 @@ class PendingFxTransferOptimisticLockingIntegrationTest {
         UUID id = UUID.randomUUID();
         tx.executeWithoutResult(status -> {
             PendingFxTransfer transfer = new PendingFxTransfer(id, "opt-lock-test-1", UUID.randomUUID(),
-                    "opt-lock-source", "opt-lock-dest", 10_000L, new BigDecimal("0.92000000"), 9_200L);
+                    "opt-lock-source", "opt-lock-dest", 10_000L, new BigDecimal("0.92000000"), 9_200L,
+                    Instant.now().plusSeconds(60));
             pendingFxTransferRepository.save(transfer);
         });
 

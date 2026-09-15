@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
 import com.ledger.ledgerservice.domain.*;
+import com.ledger.ledgerservice.holds.HoldsServiceClient;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.OutboxRepository;
@@ -39,17 +40,23 @@ public class TransactionPoster {
     private final EntryRepository entryRepository;
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
+    private final HoldsServiceClient holdsServiceClient;
+    private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     public TransactionPoster(AccountRepository accountRepository,
                               TransactionRepository transactionRepository,
                               EntryRepository entryRepository,
                               OutboxRepository outboxRepository,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              HoldsServiceClient holdsServiceClient,
+                              io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
         this.entryRepository = entryRepository;
         this.outboxRepository = outboxRepository;
         this.objectMapper = objectMapper;
+        this.holdsServiceClient = holdsServiceClient;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -86,6 +93,16 @@ public class TransactionPoster {
     @Transactional
     public TransactionResponse postInTransaction(CreateTransactionRequest request,
                                                    String idempotencyKey, String requestHash) {
+        var sample = io.micrometer.core.instrument.Timer.start(meterRegistry);
+        try {
+            return doPostInTransaction(request, idempotencyKey, requestHash);
+        } finally {
+            sample.stop(meterRegistry.timer("ledger.transaction.latency"));
+        }
+    }
+
+    private TransactionResponse doPostInTransaction(CreateTransactionRequest request,
+                                                      String idempotencyKey, String requestHash) {
         var existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             return replayOrConflict(existing.get(), requestHash, request);
@@ -114,8 +131,12 @@ public class TransactionPoster {
         // by a client via POST /accounts.
         boolean debitAccountAllowsNegativeBalance =
                 debitAccount.getAccountRef().startsWith(FX_CLEARING_ACCOUNT_REF_PREFIX);
-        if (!debitAccountAllowsNegativeBalance && debitAccount.getBalanceMinor() < request.amountMinor()) {
-            throw new InsufficientFundsException(debitAccount.getAccountRef());
+        if (!debitAccountAllowsNegativeBalance) {
+            long heldBalanceMinor = holdsServiceClient.getHeldBalance(debitAccount.getAccountRef());
+            long availableBalanceMinor = debitAccount.getBalanceMinor() - heldBalanceMinor;
+            if (request.amountMinor() > availableBalanceMinor) {
+                throw new InsufficientFundsException(debitAccount.getAccountRef());
+            }
         }
 
         UUID transactionId = UUID.randomUUID();
@@ -156,6 +177,7 @@ public class TransactionPoster {
         if (!existing.getRequestPayloadHash().equals(requestHash)) {
             throw new IdempotencyConflictException(existing.getIdempotencyKey());
         }
+        meterRegistry.counter("ledger.idempotency.replay").increment();
         return new TransactionResponse(existing.getId(), existing.getStatus().name(),
                 request.debitAccountRef(), request.creditAccountRef(),
                 request.amountMinor(), request.currency(), true);

@@ -3,6 +3,7 @@ package com.ledger.ledgerservice.api.error;
 import com.ledger.ledgerservice.service.AccountNotActiveException;
 import com.ledger.ledgerservice.service.AccountNotFoundException;
 import com.ledger.ledgerservice.service.AccountRefAlreadyExistsException;
+import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
 import com.ledger.ledgerservice.service.IdempotencyConflictException;
 import com.ledger.ledgerservice.service.InsufficientFundsException;
 import com.ledger.ledgerservice.service.ReservedAccountRefException;
@@ -45,5 +46,10 @@ public class ApiExceptionHandler {
     public ResponseEntity<Map<String, String>> handleReservedAccountRef(ReservedAccountRefException e) {
         // 400, not 409: nothing already exists to conflict with -- the request itself is disallowed.
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(HoldsServiceUnavailableException.class)
+    public ResponseEntity<Map<String, String>> handleHoldsServiceUnavailable(HoldsServiceUnavailableException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
     }
 }

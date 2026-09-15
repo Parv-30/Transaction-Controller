@@ -68,6 +68,7 @@ services:
       PROCESSOR_BASE_URL: http://transaction-processor:8081
       SERVER_PORT: "8090"
       FX_SERVICE_URL: http://fx-service:8083
+      HOLDS_SERVICE_URL: http://holds-service:8082
     ports:
       - "8090:8090"
     depends_on:
@@ -228,6 +229,38 @@ services:
         condition: service_started
       keycloak:
         condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      ledger-service:
+        condition: service_started
+      transaction-processor:
+        condition: service_started
+      holds-service:
+        condition: service_started
+      api-gateway:
+        condition: service_started
+      fx-service:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
 
 volumes:
   ledger-pgdata:
