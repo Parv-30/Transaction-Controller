@@ -30,7 +30,7 @@ public class ProcessedEventGate {
             jdbcTemplate.update("INSERT INTO processed_events (event_id) VALUES (?)", eventId);
             return true;
         } catch (DataIntegrityViolationException duplicateKey) {
-            meterRegistry.counter("holds.rabbitmq.redelivery").increment();
+            meterRegistry.counter("gateway_sim.rabbitmq.redelivery").increment();
             return false;
         }
     }

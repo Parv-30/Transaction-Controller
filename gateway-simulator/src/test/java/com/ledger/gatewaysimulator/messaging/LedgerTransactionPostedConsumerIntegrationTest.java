@@ -150,7 +150,7 @@ class LedgerTransactionPostedConsumerIntegrationTest {
                 MessagingConstants.TRANSACTION_POSTED_ROUTING_KEY, message);
 
         await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
-            var counter = meterRegistry.find("holds.rabbitmq.redelivery").counter();
+            var counter = meterRegistry.find("gateway_sim.rabbitmq.redelivery").counter();
             assertThat(counter).isNotNull();
             assertThat(counter.count()).isGreaterThanOrEqualTo(1.0);
         });
