@@ -28,4 +28,16 @@ public class AccountController {
     public ResponseEntity<List<AccountResponse>> listWalletAccounts(@PathVariable("groupId") UUID groupId) {
         return ResponseEntity.ok(accountService.listWalletAccounts(groupId));
     }
+
+    @GetMapping("/accounts")
+    public ResponseEntity<List<AccountResponse>> list(
+            @RequestParam(value = "accountRef", required = false) String accountRef,
+            @RequestParam(value = "status", required = false) String status) {
+        return ResponseEntity.ok(accountService.listAccounts(accountRef, status));
+    }
+
+    @GetMapping("/accounts/{accountRef}")
+    public ResponseEntity<AccountResponse> get(@PathVariable("accountRef") String accountRef) {
+        return ResponseEntity.ok(accountService.getAccount(accountRef));
+    }
 }
