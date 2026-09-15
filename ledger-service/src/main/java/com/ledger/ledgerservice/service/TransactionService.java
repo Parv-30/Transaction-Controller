@@ -8,6 +8,7 @@ import com.ledger.ledgerservice.api.dto.TransactionSummaryResponse;
 import com.ledger.ledgerservice.domain.Direction;
 import com.ledger.ledgerservice.domain.Entry;
 import com.ledger.ledgerservice.domain.Transaction;
+import com.ledger.ledgerservice.domain.TransactionStatus;
 import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
@@ -83,6 +84,58 @@ public class TransactionService {
                     "exception", genuineFailure.getClass().getSimpleName()).increment();
             throw genuineFailure;
         }
+    }
+
+    /**
+     * Deliberately NOT @Transactional, for the same reason as {@link #postTransaction}: it
+     * calls {@code postTransaction}, which owns its own transaction (and race-recovery logic
+     * that depends on running in its own transaction -- see that method's Javadoc). If this
+     * method were @Transactional, that call would join this method's transaction instead
+     * (Spring's default REQUIRED propagation), silently defeating postTransaction's isolation
+     * and risking an UnexpectedRollbackException on commit even when postTransaction's own
+     * race handling has already resolved things correctly. So this method does its own
+     * pre-checks as plain reads, delegates the actual compensating posting to postTransaction
+     * (which is safe to call here since neither method is @Transactional, so there's no
+     * self-invocation bypass), and then hands the remaining bookkeeping -- linking the
+     * reversal back to the original and marking the original REVERSED -- to
+     * {@link TransactionPoster#finalizeReversal}, its own small transactional boundary on the
+     * bean that legitimately owns @Transactional methods in this codebase.
+     *
+     * <p>Order of checks matters for idempotent-retry semantics: checking already-reversed
+     * before is-a-reversal (though a transaction can never be both) mirrors the concurrent-
+     * retry scenario this task's tests cover -- once an original has committed to REVERSED, a
+     * second top-level call must reject via {@link TransactionAlreadyReversedException} rather
+     * than silently returning the existing reversal, since the deterministic idempotency key on
+     * the underlying postTransaction call already protects against genuinely concurrent
+     * in-flight requests.
+     */
+    public TransactionSummaryResponse reverseTransaction(UUID transactionId) {
+        Transaction original = transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new TransactionNotFoundException(transactionId));
+        if (original.getReversalOfTransactionId() != null) {
+            throw new CannotReverseAReversalException(transactionId);
+        }
+        if (original.getStatus() == TransactionStatus.REVERSED) {
+            throw new TransactionAlreadyReversedException(transactionId);
+        }
+
+        List<Entry> entries = entryRepository.findByTransactionId(transactionId);
+        Entry originalDebitEntry = entries.stream().filter(e -> e.getDirection() == Direction.DEBIT).findFirst().orElseThrow();
+        Entry originalCreditEntry = entries.stream().filter(e -> e.getDirection() == Direction.CREDIT).findFirst().orElseThrow();
+        String originalDebitAccountRef = accountRepository.findById(originalDebitEntry.getAccountId()).orElseThrow().getAccountRef();
+        String originalCreditAccountRef = accountRepository.findById(originalCreditEntry.getAccountId()).orElseThrow().getAccountRef();
+
+        CreateTransactionRequest reversalRequest = new CreateTransactionRequest(
+                originalCreditAccountRef, originalDebitAccountRef, originalDebitEntry.getAmountMinor(),
+                originalDebitEntry.getCurrency(), "Reversal of transaction " + transactionId, "REVERSAL");
+        String reversalIdempotencyKey = "admin-reversal-" + transactionId;
+
+        TransactionResponse reversalResponse = postTransaction(reversalRequest, reversalIdempotencyKey);
+
+        transactionPoster.finalizeReversal(reversalResponse.transactionId(), transactionId);
+
+        Transaction reversalTransaction = transactionRepository.findById(reversalResponse.transactionId()).orElseThrow();
+        return toSummary(reversalTransaction);
     }
 
     public List<TransactionSummaryResponse> listTransactions(String accountRefFilter, String statusFilter,

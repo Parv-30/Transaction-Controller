@@ -4,6 +4,7 @@ import com.ledger.ledgerservice.api.dto.TransactionDetailResponse;
 import com.ledger.ledgerservice.api.dto.TransactionSummaryResponse;
 import com.ledger.ledgerservice.service.TransactionService;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -32,5 +33,10 @@ public class TransactionQueryController {
     @GetMapping("/transactions/{id}")
     public ResponseEntity<TransactionDetailResponse> get(@PathVariable("id") UUID id) {
         return ResponseEntity.ok(transactionService.getTransaction(id));
+    }
+
+    @PostMapping("/transactions/{id}/reverse")
+    public ResponseEntity<TransactionSummaryResponse> reverse(@PathVariable("id") UUID id) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(transactionService.reverseTransaction(id));
     }
 }

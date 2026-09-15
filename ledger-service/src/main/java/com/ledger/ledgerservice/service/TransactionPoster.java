@@ -198,6 +198,33 @@ public class TransactionPoster {
                 request.amountMinor(), request.currency(), true);
     }
 
+    /**
+     * Atomically links a freshly-posted reversal transaction back to the original it reverses
+     * and marks the original REVERSED. Deliberately its own small @Transactional boundary on
+     * this bean (see the class Javadoc on why @Transactional lives here, not on
+     * {@link TransactionService}): {@link TransactionService#reverseTransaction} calls
+     * {@link TransactionService#postTransaction}, which owns its own transaction and race
+     * recovery (see that method's Javadoc), immediately before calling this method -- if this
+     * bookkeeping were folded into a single @Transactional method on TransactionService that
+     * also invoked postTransaction, the two calls would share one physical transaction, so a
+     * DataIntegrityViolationException/ObjectOptimisticLockingFailureException raised (and
+     * caught) inside postTransaction's race-recovery path would still have already marked that
+     * shared transaction rollback-only, causing an UnexpectedRollbackException here on commit
+     * even though the exception was handled. Keeping this bookkeeping in its own transaction,
+     * invoked only after postTransaction has fully returned (and therefore fully committed or
+     * cleanly resolved its own transaction), avoids that entirely.
+     */
+    @Transactional
+    public void finalizeReversal(UUID reversalTransactionId, UUID originalTransactionId) {
+        Transaction reversalTransaction = transactionRepository.findById(reversalTransactionId).orElseThrow();
+        reversalTransaction.setReversalOfTransactionId(originalTransactionId);
+        transactionRepository.save(reversalTransaction);
+
+        Transaction original = transactionRepository.findById(originalTransactionId).orElseThrow();
+        original.markReversed();
+        transactionRepository.save(original);
+    }
+
     private String buildOutboxPayload(Transaction transaction, Account debitAccount,
                                        Account creditAccount, CreateTransactionRequest request) {
         try {

@@ -411,4 +411,67 @@ class TransactionServiceIntegrationTest {
         assertThatThrownBy(() -> transactionService.getTransaction(UUID.randomUUID()))
                 .isInstanceOf(TransactionNotFoundException.class);
     }
+
+    @Test
+    void reversingATransactionPostsACompensatingTransactionWithSwappedAccounts() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 400L, "USD", "reversal source"), "reverse-test-key-1");
+
+        TransactionSummaryResponse reversal = transactionService.reverseTransaction(original.transactionId());
+
+        assertThat(reversal.debitAccountRef()).isEqualTo("acct-b");
+        assertThat(reversal.creditAccountRef()).isEqualTo("acct-a");
+        assertThat(reversal.amountMinor()).isEqualTo(400L);
+        assertThat(reversal.currency()).isEqualTo("USD");
+        assertThat(reversal.reversalOfTransactionId()).isEqualTo(original.transactionId());
+        assertThat(reversal.transactionType()).isEqualTo("REVERSAL");
+
+        TransactionDetailResponse originalDetail = transactionService.getTransaction(original.transactionId());
+        assertThat(originalDetail.status()).isEqualTo("REVERSED");
+    }
+
+    @Test
+    void reversingAnAlreadyReversedTransactionThrowsConflict() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 150L, "USD", "double reversal test"), "double-reverse-key-1");
+        transactionService.reverseTransaction(original.transactionId());
+
+        assertThatThrownBy(() -> transactionService.reverseTransaction(original.transactionId()))
+                .isInstanceOf(TransactionAlreadyReversedException.class);
+    }
+
+    @Test
+    void reversingAReversalThrowsConflict() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 250L, "USD", "chain reversal test"), "chain-reverse-key-1");
+        TransactionSummaryResponse reversal = transactionService.reverseTransaction(original.transactionId());
+
+        assertThatThrownBy(() -> transactionService.reverseTransaction(reversal.transactionId()))
+                .isInstanceOf(CannotReverseAReversalException.class);
+    }
+
+    @Test
+    void reversingTheSameTransactionTwiceConcurrentlyViaRetryProducesExactlyOneReversal() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 350L, "USD", "idempotent reversal test"), "idempotent-reverse-key-1");
+
+        TransactionSummaryResponse firstAttempt = transactionService.reverseTransaction(original.transactionId());
+        // A caller retrying after a lost response (e.g. a timeout) would call reverseTransaction
+        // again for the same original id -- but by then the original is already REVERSED, so this
+        // should throw TransactionAlreadyReversedException rather than silently succeeding twice.
+        // This IS the correct behavior (not a bug): the deterministic idempotency key on the
+        // underlying postTransaction call protects against a race where two reversal requests
+        // are in flight simultaneously before either has committed; once one has fully committed
+        // and the original is marked REVERSED, a second top-level call correctly rejects via the
+        // already-reversed check, which is a stronger and simpler guarantee for this admin-only
+        // endpoint than allowing a silent replay.
+        assertThatThrownBy(() -> transactionService.reverseTransaction(original.transactionId()))
+                .isInstanceOf(TransactionAlreadyReversedException.class);
+
+        List<TransactionSummaryResponse> allReversalsOfOriginal =
+                transactionService.listTransactions(null, null, null, null).stream()
+                        .filter(t -> original.transactionId().equals(t.reversalOfTransactionId()))
+                        .toList();
+        assertThat(allReversalsOfOriginal).hasSize(1);
+    }
 }

@@ -6,7 +6,9 @@ import com.ledger.ledgerservice.service.AccountRefAlreadyExistsException;
 import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
 import com.ledger.ledgerservice.service.IdempotencyConflictException;
 import com.ledger.ledgerservice.service.InsufficientFundsException;
+import com.ledger.ledgerservice.service.CannotReverseAReversalException;
 import com.ledger.ledgerservice.service.ReservedAccountRefException;
+import com.ledger.ledgerservice.service.TransactionAlreadyReversedException;
 import com.ledger.ledgerservice.service.TransactionNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -57,5 +59,15 @@ public class ApiExceptionHandler {
     @ExceptionHandler(HoldsServiceUnavailableException.class)
     public ResponseEntity<Map<String, String>> handleHoldsServiceUnavailable(HoldsServiceUnavailableException e) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(TransactionAlreadyReversedException.class)
+    public ResponseEntity<Map<String, String>> handleTransactionAlreadyReversed(TransactionAlreadyReversedException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(CannotReverseAReversalException.class)
+    public ResponseEntity<Map<String, String>> handleCannotReverseAReversal(CannotReverseAReversalException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
 }
