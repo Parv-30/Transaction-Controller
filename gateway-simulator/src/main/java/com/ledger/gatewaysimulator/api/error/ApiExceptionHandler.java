@@ -15,4 +15,14 @@ public class ApiExceptionHandler {
     public ResponseEntity<Map<String, String>> handleDepositNotFound(DepositNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
     }
+
+    @ExceptionHandler(WithdrawalNotYetSubmittedException.class)
+    public ResponseEntity<Map<String, String>> handleWithdrawalNotYetSubmitted(WithdrawalNotYetSubmittedException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(WithdrawalNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleWithdrawalNotFound(WithdrawalNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+    }
 }
