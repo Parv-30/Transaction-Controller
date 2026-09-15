@@ -862,7 +862,7 @@ public class WebhookDedup {
 
 - [ ] **Step 5: Write `OutboxEvent` entity**
 
-Copy `holds-service/src/main/java/com/ledger/holdsservice/messaging/OutboxEvent.java` verbatim, changing only the package declaration to `com.ledger.gatewaysimulator.messaging` (place this file at `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/messaging/OutboxEvent.java` instead of under `domain/`, matching where Holds Service itself keeps it — adjust the file path in this task's own file list accordingly when creating it).
+Copy `holds-service/src/main/java/com/ledger/holdsservice/domain/OutboxEvent.java` verbatim, changing only the package declaration to `com.ledger.gatewaysimulator.domain` (Task 6's implementer verified Holds Service actually keeps this file under `domain/`, not `messaging/` as an earlier draft of this plan incorrectly assumed — place this file at `gateway-simulator/src/main/java/com/ledger/gatewaysimulator/domain/OutboxEvent.java`, matching where it was actually created).
 
 - [ ] **Step 6: Write the four repositories**
 
@@ -908,7 +908,7 @@ public interface WebhookDedupRepository extends JpaRepository<WebhookDedup, Stri
 }
 ```
 
-For `OutboxRepository`, copy `holds-service/src/main/java/com/ledger/holdsservice/messaging/OutboxRepository.java` verbatim, changing only the package to `com.ledger.gatewaysimulator.messaging`.
+For `OutboxRepository`, copy `holds-service/src/main/java/com/ledger/holdsservice/repository/OutboxRepository.java` verbatim, changing only the package to `com.ledger.gatewaysimulator.repository` (Task 6 already created this file at this exact path — this step is retained here only for reference/traceability).
 
 - [ ] **Step 7: Write the integration test**
 
