@@ -9,15 +9,20 @@ console, the first client-facing surface for the whole platform.
 
 This is the first of a two-part frontend effort: this spec covers the application itself
 (pages, auth, API integration). A small, necessary backend addition (self-scoped hold
-listing for end users, see Section 2) is included here since the frontend's Holds page
+listing for end users, see Section 4) is included here since the frontend's Holds page
 cannot be built without it, but it is implemented and reviewed as its own early task before
 any frontend code depends on it.
 
 ## Goals
 
+- A public landing page (`/`) with a real visual identity — a hero image, a short pitch, and
+  a login entry point — before any authentication happens.
 - One React SPA covering both experiences: `/app/*` for end users, `/admin/*` for admins.
 - Real login against Keycloak via a new, browser-safe public OAuth2 client — no more
   standing tokens fetched via shell scripts.
+- A genuine, considered visual design — not default/unstyled component library output — with
+  a real design language (color, type, layout, dark mode) applied consistently across the
+  landing page, both app surfaces, and the shared component set.
 - Every capability the backend already exposes gets a corresponding UI surface: accounts,
   transfers (same-currency and cross-currency), transaction history, holds, Gateway
   Simulator deposits/withdrawals (end-user side); account/transaction/hold search,
@@ -37,13 +42,66 @@ any frontend code depends on it.
 - No self-registration flow — users are still provisioned via the Keycloak realm-import file,
   matching how `alice`/`bob`/`admin` already work.
 
-## Section 1 — Architecture & Auth
+## Section 1 — Visual Design System
+
+The application follows a clean fintech-dashboard aesthetic — the visual language shared by
+Revolut, Monzo, and most modern banking-dashboard design work: generous whitespace, one
+strong accent color against neutral/white (or near-black in dark mode) surfaces, large bold
+numerals for money amounts so balances and transaction values read as each screen's visual
+anchor, soft-rounded cards rather than sharp corners or heavy shadows, and small inline trend
+charts rather than dense data tables wherever a card reads better.
+
+**Color**: a near-black/deep-navy for primary text and key actions; one accent color (a
+distinct indigo, chosen to avoid collision with the red/amber/green already reserved for
+status states — error/warning/success — across both the landing page and both app surfaces);
+white/very-light-gray surfaces in light mode. Dark mode is a first-class second theme (a
+near-black page background, elevated dark-gray cards), not an afterthought — implemented via
+CSS custom properties/Tailwind's dark-mode variant so every component defines both states
+together, matching the pattern of not hardcoding a color without also defining its dark
+counterpart.
+
+**Typography**: a clean geometric sans (Inter). Money amounts (balances, transaction rows,
+the hero stat on the Dashboard) render bold and larger than surrounding text; labels and
+metadata render smaller and lighter-weight. Sentence case throughout — no ALL CAPS labels, no
+Title Case button text.
+
+**Layout**: card-based on the end-user side — a balance card, an activity card, a holds
+summary card, each its own soft-rounded surface in a responsive grid — since end-user screens
+are about a handful of at-a-glance facts. The admin console's list views (Accounts,
+Transactions, Holds, Reconciliation runs) use tables instead, since those screens are
+genuinely about scanning/sorting many rows, where a table is the more honest layout than
+forcing cards to hold tabular data.
+
+**Motion**: minimal and purposeful — a brief transition on route change, skeleton/shimmer
+loading placeholders instead of spinners, no decorative animation.
+
+**Data visualization**: a small area/sparkline chart on the Dashboard showing recent balance
+trend, built with Recharts (a React-native charting library, avoiding hand-rolled SVG chart
+code for something this standard).
+
+## Section 2 — Public Landing Page (`/`)
+
+The unauthenticated entry point — a single, minimal marketing-style page, not a full
+marketing site: a full-width hero image (a bank headquarters/building photograph, sourced as
+a static asset — a free-license stock photo bundled with the app, not fetched from an
+external API at runtime, so the page has no third-party runtime dependency and always
+renders identically), a headline and one-line pitch describing the platform, and a
+prominent "Log in" call to action that starts the Keycloak Authorization Code + PKCE flow
+(Section 3). No pricing, features grid, or footer sections — deliberately minimal, since this
+is a portfolio demo's entry point, not a real institution's public marketing site.
+
+An already-authenticated visitor who lands on `/` (a valid, non-expired session) is
+redirected straight to `/app` or `/admin` per the role-based landing rule (Section 6) rather
+than being shown the landing page again.
+
+## Section 3 — Architecture & Auth
 
 **Stack**: Vite + React + TypeScript + Tailwind CSS. React Router for client-side routing
-(`/app/*` vs `/admin/*` route trees under one app shell). No heavy UI component library — a
-small shared component set (button, input, table, badge, card, toast) built directly on
-Tailwind, since a from-scratch look better demonstrates frontend capability than a wrapped
-component library for a portfolio project.
+(the landing page, `/app/*`, and `/admin/*` route trees under one app shell). No heavy UI
+component library — the design system in Section 1 is implemented as a small shared
+component set (button, input, table, badge, card, toast) built directly on Tailwind, since a
+from-scratch, deliberately-designed look better demonstrates frontend capability than a
+wrapped component library for a portfolio project.
 
 **Deployment**: a new top-level module, `web/`, with its own `Dockerfile` (multi-stage: Vite
 build, then a static file server — nginx, matching the lightweight-static-serve pattern
@@ -68,7 +126,7 @@ redirect to Keycloak's hosted login page, handle the callback, hold the access t
 memory (not `localStorage`, to reduce XSS-exfiltration surface), and use the library's silent
 -renewal support to refresh before expiry. On login, the app decodes the JWT's
 `realm_access.roles` claim — the exact claim the backend's own `KeycloakRealmRoleConverter`
-already reads — to determine whether the user lands on `/app` or `/admin` (Section 3
+already reads — to determine whether the user lands on `/app` or `/admin` (Section 6
 covers the routing rule), and to conditionally render admin-only UI.
 
 **API integration**: every request goes through the existing API Gateway
@@ -76,13 +134,13 @@ covers the routing rule), and to conditionally render admin-only UI.
 the frontend never addresses `ledger-service`/`holds-service`/etc. directly, mirroring how
 every other client (chaos scripts, smoke tests) already only ever talks to the gateway. A
 single shared API client module wraps `fetch`, attaches the current access token as a Bearer
-header, and centralizes error handling (Section 4).
+header, and centralizes error handling (Section 7).
 
-## Section 2 — Backend addition: self-scoped hold listing
+## Section 4 — Backend addition: self-scoped hold listing
 
 **Problem**: `GET /holds` (Admin API Additions) is entirely admin-gated — there is no way for
 an authenticated non-admin user to list holds on their own account. The end-user Holds page
-(Section 3) needs this.
+(Section 5) needs this.
 
 **Fix**: relax `HoldController`'s existing `GET /holds` endpoint (not add a new route) to
 allow any authenticated caller when the `accountRef` query parameter is present and the
@@ -116,7 +174,7 @@ new check + exception in `HoldService`, and the JWT-forwarding verification abov
 and reviewed as its own early task in the implementation plan, completed and verified before
 any frontend Holds-page work begins.
 
-## Section 3 — End-user banking UI (`/app/*`)
+## Section 5 — End-user banking UI (`/app/*`)
 
 - **`/app` (Dashboard)**: current account balance — both `postedBalanceMinor` and
   `availableBalanceMinor` from Holds Service's `GET /accounts/{accountRef}/available-balance`
@@ -130,7 +188,7 @@ any frontend Holds-page work begins.
   status/date filtering (reusing the same query params the admin console's own Transactions
   page uses), row click-through to a detail view (`GET /transactions/{id}`) showing both
   entries.
-- **`/app/holds` (Holds)**: `GET /holds?accountRef=<my-account>` (Section 2's relaxed
+- **`/app/holds` (Holds)**: `GET /holds?accountRef=<my-account>` (Section 4's relaxed
   endpoint), read-only for end users — no user-facing release/capture action, since those
   remain semantically administrative/merchant-side actions in this platform's existing
   design (a hold is created and released by the party initiating the hold flow, not by the
@@ -145,7 +203,7 @@ any frontend Holds-page work begins.
   since this platform has no separate operator role driving that resolution — the same
   control that chaos scenario 9 and the smoke test already use).
 
-## Section 4 — Admin console (`/admin/*`)
+## Section 6 — Admin console (`/admin/*`)
 
 - **`/admin` (Accounts, landing page)**: `GET /accounts?accountRef=&status=` list/search,
   row click-through to `GET /accounts/{accountRef}` detail.
@@ -156,7 +214,7 @@ any frontend Holds-page work begins.
   the dialog states plainly that this posts a new compensating transaction, consistent with
   the backend's own irreversible-mutation design).
 - **`/admin/holds` (Holds)**: `GET /holds?accountRef=&status=` list/search (the unscoped
-  admin form of Section 2's relaxed endpoint), a "Release" action per active hold
+  admin form of Section 4's relaxed endpoint), a "Release" action per active hold
   (`POST /holds/{id}/release`).
 - **`/admin/reconciliation` (Reconciliation)**: `GET /reconciliation/runs` history table, a
   "Run now" button (`POST /reconciliation/runs`) that triggers a run and refreshes the list.
@@ -171,7 +229,7 @@ user also carries the `user` role per the Admin API Additions design); a caller 
 navigate directly to an `/admin/*` route without the `admin` role redirects to `/app` with a
 brief "not authorized" notice, rather than showing a broken or empty admin page.
 
-## Section 5 — Shared Concerns
+## Section 7 — Shared Concerns
 
 **API client**: one module wrapping `fetch`, responsible for: attaching
 `Authorization: Bearer <token>` to every request; parsing the backend's existing error-body
