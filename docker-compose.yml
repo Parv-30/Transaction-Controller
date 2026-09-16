@@ -202,6 +202,7 @@ services:
       LEDGER_SERVICE_URL: http://ledger-service:8090
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "5672"
+      KEYCLOAK_ISSUER_URI: http://host.docker.internal:8180/realms/ledger
     ports:
       - "8082:8082"
     depends_on:

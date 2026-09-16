@@ -1,5 +1,6 @@
 package com.ledger.holdsservice.api.error;
 
+import com.ledger.holdsservice.service.AccountRefRequiredForNonAdminException;
 import com.ledger.holdsservice.service.CaptureExceedsRemainingAmountException;
 import com.ledger.holdsservice.service.HoldIdempotencyConflictException;
 import com.ledger.holdsservice.service.HoldNotActiveException;
@@ -38,5 +39,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(HoldNotActiveException.class)
     public ResponseEntity<Map<String, String>> handleHoldNotActive(HoldNotActiveException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(AccountRefRequiredForNonAdminException.class)
+    public ResponseEntity<Map<String, String>> handleAccountRefRequired(AccountRefRequiredForNonAdminException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
     }
 }
