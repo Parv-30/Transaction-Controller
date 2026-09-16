@@ -37,7 +37,7 @@ export interface TransactionDetail {
 }
 
 export interface HoldSummary {
-  id: string;
+  holdId: string;
   accountRef: string;
   destinationAccountRef: string;
   amountMinor: number;
