@@ -1,5 +1,6 @@
 package com.ledger.ledgerservice.reconciliation;
 
+import com.ledger.ledgerservice.api.dto.ReconciliationRunResponse;
 import com.ledger.ledgerservice.domain.ReconciliationFinding;
 import com.ledger.ledgerservice.domain.ReconciliationRun;
 import com.ledger.ledgerservice.repository.ReconciliationFindingRepository;
@@ -231,6 +232,19 @@ class ReconciliationServiceIntegrationTest {
 
         assertThat(run.getStatus()).isEqualTo(ReconciliationRun.Status.COMPLETED);
         assertThat(run.getOutboxStuckCount()).isZero();
+    }
+
+    @Test
+    void listRunsReturnsRunsNewestFirst() {
+        reconciliationService.runReconciliation();
+        reconciliationService.runReconciliation();
+
+        List<ReconciliationRunResponse> runs = reconciliationService.listRuns();
+
+        assertThat(runs.size()).isGreaterThanOrEqualTo(2);
+        for (int i = 0; i < runs.size() - 1; i++) {
+            assertThat(runs.get(i).startedAt()).isAfterOrEqualTo(runs.get(i + 1).startedAt());
+        }
     }
 
     @Test

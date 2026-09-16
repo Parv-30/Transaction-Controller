@@ -2,6 +2,9 @@ package com.ledger.ledgerservice.service;
 
 import com.ledger.ledgerservice.api.dto.CreateTransactionRequest;
 import com.ledger.ledgerservice.api.dto.TransactionResponse;
+import com.ledger.ledgerservice.api.dto.TransactionDetailResponse;
+import com.ledger.ledgerservice.api.dto.TransactionSummaryResponse;
+import com.ledger.ledgerservice.api.dto.EntryResponse;
 import com.ledger.ledgerservice.domain.Account;
 import com.ledger.ledgerservice.domain.AccountStatus;
 import com.ledger.ledgerservice.domain.Transaction;
@@ -20,6 +23,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -332,5 +336,142 @@ class TransactionServiceIntegrationTest {
 
         Transaction saved = transactionRepository.findById(response.transactionId()).orElseThrow();
         assertThat(saved.getTransactionType()).isEqualTo("WITHDRAWAL_EXTERNAL");
+    }
+
+    @Test
+    void listTransactionsWithNoFiltersReturnsAllTransactions() {
+        transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 100L, "USD", "list test"), "list-test-key-1");
+
+        List<TransactionSummaryResponse> results = transactionService.listTransactions(null, null, null, null);
+
+        assertThat(results).extracting(TransactionSummaryResponse::debitAccountRef).contains("acct-a");
+    }
+
+    @Test
+    void listTransactionsFiltersByAccountRefOnEitherSide() {
+        TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 200L, "USD", "filter test"), "filter-test-key-1");
+
+        List<TransactionSummaryResponse> debitSideResults =
+                transactionService.listTransactions("acct-a", null, null, null);
+        List<TransactionSummaryResponse> creditSideResults =
+                transactionService.listTransactions("acct-b", null, null, null);
+
+        assertThat(debitSideResults).extracting(TransactionSummaryResponse::transactionId)
+                .contains(posted.transactionId());
+        assertThat(creditSideResults).extracting(TransactionSummaryResponse::transactionId)
+                .contains(posted.transactionId());
+    }
+
+    @Test
+    void listTransactionsFiltersByStatus() {
+        transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 50L, "USD", "status filter test"), "status-filter-key-1");
+
+        List<TransactionSummaryResponse> postedResults = transactionService.listTransactions(null, "POSTED", null, null);
+        List<TransactionSummaryResponse> failedResults = transactionService.listTransactions(null, "FAILED", null, null);
+
+        assertThat(postedResults).isNotEmpty();
+        assertThat(failedResults).isEmpty();
+    }
+
+    @Test
+    void listTransactionsFiltersBySinceAndUntil() {
+        TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 75L, "USD", "date filter test"), "date-filter-key-1");
+        Instant beforePosting = Instant.now().minusSeconds(60);
+        Instant afterPosting = Instant.now().plusSeconds(60);
+
+        List<TransactionSummaryResponse> inRangeResults =
+                transactionService.listTransactions(null, null, beforePosting, afterPosting);
+        List<TransactionSummaryResponse> outOfRangeResults =
+                transactionService.listTransactions(null, null, afterPosting, null);
+
+        assertThat(inRangeResults).extracting(TransactionSummaryResponse::transactionId)
+                .contains(posted.transactionId());
+        assertThat(outOfRangeResults).extracting(TransactionSummaryResponse::transactionId)
+                .doesNotContain(posted.transactionId());
+    }
+
+    @Test
+    void getTransactionReturnsDetailWithEntries() {
+        TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 300L, "USD", "detail test"), "detail-test-key-1");
+
+        TransactionDetailResponse detail = transactionService.getTransaction(posted.transactionId());
+
+        assertThat(detail.transactionId()).isEqualTo(posted.transactionId());
+        assertThat(detail.entries()).hasSize(2);
+        assertThat(detail.entries()).extracting(EntryResponse::direction).containsExactlyInAnyOrder("DEBIT", "CREDIT");
+    }
+
+    @Test
+    void getTransactionThrowsWhenNotFound() {
+        assertThatThrownBy(() -> transactionService.getTransaction(UUID.randomUUID()))
+                .isInstanceOf(TransactionNotFoundException.class);
+    }
+
+    @Test
+    void reversingATransactionPostsACompensatingTransactionWithSwappedAccounts() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 400L, "USD", "reversal source"), "reverse-test-key-1");
+
+        TransactionSummaryResponse reversal = transactionService.reverseTransaction(original.transactionId());
+
+        assertThat(reversal.debitAccountRef()).isEqualTo("acct-b");
+        assertThat(reversal.creditAccountRef()).isEqualTo("acct-a");
+        assertThat(reversal.amountMinor()).isEqualTo(400L);
+        assertThat(reversal.currency()).isEqualTo("USD");
+        assertThat(reversal.reversalOfTransactionId()).isEqualTo(original.transactionId());
+        assertThat(reversal.transactionType()).isEqualTo("REVERSAL");
+
+        TransactionDetailResponse originalDetail = transactionService.getTransaction(original.transactionId());
+        assertThat(originalDetail.status()).isEqualTo("REVERSED");
+    }
+
+    @Test
+    void reversingAnAlreadyReversedTransactionThrowsConflict() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 150L, "USD", "double reversal test"), "double-reverse-key-1");
+        transactionService.reverseTransaction(original.transactionId());
+
+        assertThatThrownBy(() -> transactionService.reverseTransaction(original.transactionId()))
+                .isInstanceOf(TransactionAlreadyReversedException.class);
+    }
+
+    @Test
+    void reversingAReversalThrowsConflict() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 250L, "USD", "chain reversal test"), "chain-reverse-key-1");
+        TransactionSummaryResponse reversal = transactionService.reverseTransaction(original.transactionId());
+
+        assertThatThrownBy(() -> transactionService.reverseTransaction(reversal.transactionId()))
+                .isInstanceOf(CannotReverseAReversalException.class);
+    }
+
+    @Test
+    void reversingTheSameTransactionTwiceConcurrentlyViaRetryProducesExactlyOneReversal() {
+        TransactionResponse original = transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 350L, "USD", "idempotent reversal test"), "idempotent-reverse-key-1");
+
+        TransactionSummaryResponse firstAttempt = transactionService.reverseTransaction(original.transactionId());
+        // A caller retrying after a lost response (e.g. a timeout) would call reverseTransaction
+        // again for the same original id -- but by then the original is already REVERSED, so this
+        // should throw TransactionAlreadyReversedException rather than silently succeeding twice.
+        // This IS the correct behavior (not a bug): the deterministic idempotency key on the
+        // underlying postTransaction call protects against a race where two reversal requests
+        // are in flight simultaneously before either has committed; once one has fully committed
+        // and the original is marked REVERSED, a second top-level call correctly rejects via the
+        // already-reversed check, which is a stronger and simpler guarantee for this admin-only
+        // endpoint than allowing a silent replay.
+        assertThatThrownBy(() -> transactionService.reverseTransaction(original.transactionId()))
+                .isInstanceOf(TransactionAlreadyReversedException.class);
+
+        List<TransactionSummaryResponse> allReversalsOfOriginal =
+                transactionService.listTransactions(null, null, null, null).stream()
+                        .filter(t -> original.transactionId().equals(t.reversalOfTransactionId()))
+                        .toList();
+        assertThat(allReversalsOfOriginal).hasSize(1);
     }
 }

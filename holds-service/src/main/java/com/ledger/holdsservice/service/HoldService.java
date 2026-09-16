@@ -6,6 +6,7 @@ import com.ledger.holdsservice.api.dto.HeldBalanceResponse;
 import com.ledger.holdsservice.api.dto.HoldResponse;
 import com.ledger.holdsservice.domain.AccountBalanceCache;
 import com.ledger.holdsservice.domain.Hold;
+import com.ledger.holdsservice.domain.HoldStatus;
 import com.ledger.holdsservice.repository.AccountBalanceCacheRepository;
 import com.ledger.holdsservice.repository.HoldRepository;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -13,6 +14,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -59,6 +61,17 @@ public class HoldService {
     public HoldResponse getHold(UUID holdId) {
         Hold hold = holdRepository.findById(holdId).orElseThrow(() -> new HoldNotFoundException(holdId));
         return holdPoster.toResponse(hold, false);
+    }
+
+    /**
+     * Backs {@code GET /holds?accountRef=&status=}. Both filters are optional; when
+     * {@code accountRef} is supplied it matches either side of the hold (source or destination).
+     */
+    @Transactional(readOnly = true)
+    public List<HoldResponse> listHolds(String accountRefFilter, String statusFilter) {
+        HoldStatus status = statusFilter != null ? HoldStatus.valueOf(statusFilter) : null;
+        List<Hold> holds = holdRepository.search(accountRefFilter, status);
+        return holds.stream().map(hold -> holdPoster.toResponse(hold, false)).toList();
     }
 
     public HoldResponse capture(UUID holdId, long amountMinor) {

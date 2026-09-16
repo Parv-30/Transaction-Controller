@@ -3,6 +3,7 @@ package com.ledger.ledgerservice.service;
 import com.ledger.ledgerservice.api.dto.CreateAccountRequest;
 import com.ledger.ledgerservice.domain.Account;
 import com.ledger.ledgerservice.domain.AccountStatus;
+import com.ledger.ledgerservice.api.dto.AccountResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -13,6 +14,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -137,5 +139,53 @@ class AccountServiceIntegrationTest {
         var accounts = accountService.listWalletAccounts(UUID.randomUUID());
 
         assertThat(accounts).isEmpty();
+    }
+
+    @Test
+    void listAccountsWithNoFiltersReturnsAllAccounts() {
+        accountService.createAccount(new CreateAccountRequest("list-test-a", "USD", null));
+        accountService.createAccount(new CreateAccountRequest("list-test-b", "USD", null));
+
+        List<AccountResponse> results = accountService.listAccounts(null, null);
+
+        assertThat(results).extracting(AccountResponse::accountRef)
+                .contains("list-test-a", "list-test-b");
+    }
+
+    @Test
+    void listAccountsFiltersByAccountRefSubstringCaseInsensitively() {
+        accountService.createAccount(new CreateAccountRequest("filter-target-1", "USD", null));
+        accountService.createAccount(new CreateAccountRequest("unrelated-2", "USD", null));
+
+        List<AccountResponse> results = accountService.listAccounts("FILTER-TARGET", null);
+
+        assertThat(results).extracting(AccountResponse::accountRef).containsExactly("filter-target-1");
+    }
+
+    @Test
+    void listAccountsFiltersByStatus() {
+        accountService.createAccount(new CreateAccountRequest("status-filter-active", "USD", null));
+
+        List<AccountResponse> activeResults = accountService.listAccounts(null, "ACTIVE");
+        List<AccountResponse> closedResults = accountService.listAccounts(null, "CLOSED");
+
+        assertThat(activeResults).extracting(AccountResponse::accountRef).contains("status-filter-active");
+        assertThat(closedResults).extracting(AccountResponse::accountRef).doesNotContain("status-filter-active");
+    }
+
+    @Test
+    void getAccountByRefReturnsTheAccount() {
+        accountService.createAccount(new CreateAccountRequest("get-by-ref-test", "EUR", null));
+
+        AccountResponse response = accountService.getAccount("get-by-ref-test");
+
+        assertThat(response.accountRef()).isEqualTo("get-by-ref-test");
+        assertThat(response.currency()).isEqualTo("EUR");
+    }
+
+    @Test
+    void getAccountByRefThrowsWhenNotFound() {
+        assertThatThrownBy(() -> accountService.getAccount("does-not-exist-ref"))
+                .isInstanceOf(AccountNotFoundException.class);
     }
 }

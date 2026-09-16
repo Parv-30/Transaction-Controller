@@ -62,6 +62,27 @@ public class AccountService {
                 .toList();
     }
 
+    public List<AccountResponse> listAccounts(String accountRefFilter, String statusFilter) {
+        List<Account> accounts;
+        if (accountRefFilter != null && statusFilter != null) {
+            accounts = accountRepository.findByAccountRefContainingIgnoreCaseAndStatus(
+                    accountRefFilter, AccountStatus.valueOf(statusFilter));
+        } else if (accountRefFilter != null) {
+            accounts = accountRepository.findByAccountRefContainingIgnoreCase(accountRefFilter);
+        } else if (statusFilter != null) {
+            accounts = accountRepository.findByStatus(AccountStatus.valueOf(statusFilter));
+        } else {
+            accounts = accountRepository.findAll();
+        }
+        return accounts.stream().map(this::toResponse).toList();
+    }
+
+    public AccountResponse getAccount(String accountRef) {
+        Account account = accountRepository.findByAccountRef(accountRef)
+                .orElseThrow(() -> new AccountNotFoundException(accountRef));
+        return toResponse(account);
+    }
+
     private AccountResponse toResponse(Account account) {
         return new AccountResponse(account.getAccountRef(), account.getCurrency(),
                 account.getBalanceMinor(), account.getStatus().name(), account.getAccountGroupId());

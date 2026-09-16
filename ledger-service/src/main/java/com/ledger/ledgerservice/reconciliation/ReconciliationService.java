@@ -1,6 +1,8 @@
 package com.ledger.ledgerservice.reconciliation;
 
+import com.ledger.ledgerservice.api.dto.ReconciliationRunResponse;
 import com.ledger.ledgerservice.domain.ReconciliationRun;
+import com.ledger.ledgerservice.repository.ReconciliationRunRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +47,7 @@ public class ReconciliationService {
     private final ReconciliationChecks checks;
     private final ReconciliationFindingsWriter writer;
     private final ProcessorReconciliationClient processorClient;
+    private final ReconciliationRunRepository reconciliationRunRepository;
 
     private final AtomicLong entriesImbalanceGauge = new AtomicLong(0);
     private final AtomicLong outboxMissingGauge = new AtomicLong(0);
@@ -53,10 +56,12 @@ public class ReconciliationService {
     public ReconciliationService(ReconciliationChecks checks,
                                   ReconciliationFindingsWriter writer,
                                   ProcessorReconciliationClient processorClient,
+                                  ReconciliationRunRepository reconciliationRunRepository,
                                   MeterRegistry meterRegistry) {
         this.checks = checks;
         this.writer = writer;
         this.processorClient = processorClient;
+        this.reconciliationRunRepository = reconciliationRunRepository;
         meterRegistry.gauge("ledger.reconciliation.entries_imbalance", entriesImbalanceGauge);
         meterRegistry.gauge("ledger.reconciliation.outbox_missing", outboxMissingGauge);
         meterRegistry.gauge("ledger.reconciliation.outbox_stuck", outboxStuckGauge);
@@ -82,6 +87,14 @@ public class ReconciliationService {
             String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             return writer.failRun(runId, reason);
         }
+    }
+
+    public List<ReconciliationRunResponse> listRuns() {
+        return reconciliationRunRepository.findAllByOrderByStartedAtDesc().stream()
+                .map(run -> new ReconciliationRunResponse(run.getId(), run.getStatus().name(),
+                        run.getStartedAt(), run.getFinishedAt(), run.getTransactionsChecked(),
+                        run.getEntriesImbalanceCount(), run.getOutboxMissingCount(), run.getOutboxStuckCount()))
+                .toList();
     }
 
     /**

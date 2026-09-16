@@ -51,6 +51,10 @@ Service is permanently out of scope, per an explicit platform-wide scoping decis
 - **External payment-rail simulation**: webhook deduplication at three layers, saga-style
   compensation on withdrawal failure/timeout, and out-of-order-confirmation handling via
   retryable rejection rather than a placeholder-state machine.
+- **Admin-gated read/reversal API surface**: seven new endpoints (transaction/account/hold
+  lookups, reconciliation-run history, and manual transaction reversal) gated behind an
+  `admin` Keycloak realm role, enforced by a custom `realm_access.roles`-aware JWT authorities
+  converter at the API Gateway.
 
 ## Architecture
 
@@ -64,6 +68,9 @@ Six Spring Boot microservices, database-per-service, fronted by an API Gateway:
   `/rates/**` / `/conversions/**` to FX Service; and `/webhooks/**`, `/simulator/**`,
   `/external-deposits/**`, `/external-withdrawals/**` to Gateway Simulator. Validates JWTs
   as an OAuth2 resource server; no unauthenticated request reaches a downstream service.
+  `GET /accounts`, `GET /accounts/{accountRef}`, `GET /transactions`,
+  `GET /transactions/{id}`, `POST /transactions/{id}/reverse`, `GET /reconciliation/runs`,
+  and `GET /holds` additionally require the `admin` realm role — see "Admin API" below.
 - **Ledger Service** (`:8090`) — owns accounts, transactions, entries, and the outbox. No
   longer directly client-facing in V2+ — all client traffic goes through the gateway. In V3
   it also owns multi-currency accounts (grouped into wallets via `accountGroupId`) and the
@@ -107,11 +114,26 @@ Six Spring Boot microservices, database-per-service, fronted by an API Gateway:
   trust boundary.
 - **Keycloak** (`:8180`, `ledger` realm) — the auth provider. Issues JWTs for the
   client-credentials and password grants above; the API Gateway validates tokens against
-  it.
+  it. A `realm_access.roles` claim (e.g. `["admin","user"]`) carries realm roles; the demo
+  user `admin` (password grant, see "Getting a token") has the `admin` role, while `alice`
+  and `bob` do not.
 - **Prometheus** (`:9090`) — scrapes `/actuator/prometheus` from all 6 Spring Boot services
   and stores the resulting metrics.
 - **Grafana** (`:3000`) — dashboards over Prometheus's data; anonymous viewer access is
   enabled for local/demo convenience (see "Known limitations").
+
+**Admin-role authorization at the gateway**: Spring Security's default JWT authorities
+converter only reads a flat `scope`/`scp` claim — it does not understand Keycloak's nested
+`realm_access.roles` claim. `KeycloakRealmRoleConverter`
+(`api-gateway/src/main/java/com/ledger/apigateway/KeycloakRealmRoleConverter.java`) reads
+that nested claim directly and maps each role to a `ROLE_*` Spring Security authority,
+wrapped in a `ReactiveJwtAuthenticationConverterAdapter` for this WebFlux gateway's
+reactive security filter chain. `SecurityConfig` then gates `GET /accounts`,
+`GET /accounts/{accountRef}`, `GET /transactions`, `GET /transactions/{id}`,
+`POST /transactions/{id}/reverse`, `GET /reconciliation/runs`, and `GET /holds` behind
+`hasAuthority("ROLE_admin")`, with explicit `HttpMethod.GET` qualifiers so the
+otherwise-identical `POST /accounts` (account creation) and `POST /holds` (hold creation)
+paths remain open to any authenticated user, unchanged.
 
 `POST /transactions` now atomically checks Holds Service's held balance before posting,
 closing the overdraw gap previously documented under "Known limitations": Ledger Service
@@ -178,8 +200,9 @@ manual testing:
 
 ```bash
 TOKEN=$(bash scripts/get-token.sh client)   # client-credentials grant (chaos-suite-client)
-TOKEN=$(bash scripts/get-token.sh alice)    # password grant, demo user "alice"
-TOKEN=$(bash scripts/get-token.sh bob)      # password grant, demo user "bob"
+TOKEN=$(bash scripts/get-token.sh alice)    # password grant, demo user "alice" (no admin role)
+TOKEN=$(bash scripts/get-token.sh bob)      # password grant, demo user "bob" (no admin role)
+TOKEN=$(bash scripts/get-token.sh admin)    # password grant, demo user "admin" (has the admin realm role)
 ```
 
 Example authenticated call — create a hold through the gateway:
@@ -332,6 +355,45 @@ ordinary transaction through the existing `POST /transactions` with
 `external-clearing-{currency}`; Gateway Simulator picks it up asynchronously off the
 `ledger.transaction.posted` event stream.
 
+### Admin API
+
+The following seven endpoints require a bearer token whose Keycloak `realm_access.roles`
+claim includes `admin` (the demo `admin` user, or any client/user provisioned with that
+realm role) — a token without it gets `403` before the request ever reaches the owning
+service. All are owned and served by **Ledger Service** except `GET /holds`, which is
+served by **Holds Service**; both are reached through the gateway like every other
+endpoint above.
+
+```bash
+ADMIN_TOKEN=$(bash scripts/get-token.sh admin)
+```
+
+`GET /accounts` — lists all accounts.
+
+`GET /accounts/{accountRef}` — fetches a single account by its reference.
+
+`GET /transactions` — lists all transactions.
+
+`GET /transactions/{id}` — fetches a single transaction by id.
+
+`POST /transactions/{id}/reverse` — reverses a previously posted transaction. This posts a
+**new, compensating transaction** with the debit/credit legs swapped — it never mutates or
+deletes the original transaction or its ledger entries, preserving the ledger's
+append-only/audit-trail property. Returns `404` if `{id}` doesn't identify a real
+transaction (this is what proves the request passed the admin-role gate and actually
+reached the controller, rather than being rejected at the gateway).
+
+```bash
+curl -X POST http://localhost:8080/transactions/{id}/reverse \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+`GET /reconciliation/runs` — lists past reconciliation run results (as opposed to
+`POST /reconciliation/runs`, unchanged and open to any authenticated user, which triggers a
+new run).
+
+`GET /holds` — served by **Holds Service**. Lists all holds.
+
 ## Known limitations
 
 **Carried over from V1:**
@@ -341,9 +403,8 @@ ordinary transaction through the existing `POST /transactions` with
 - No fee simulation — Fees Service (V4 of the full platform spec) is permanently out of
   scope, per an explicit scoping decision, not merely "not yet built." External payment
   simulation (V5) is now implemented — see "New in V5" below.
-- Write-path only for the ledger itself — there is no `GET /transactions/{id}`. Accounts are
-  seeded directly via SQL (see `scripts/smoke-test.sh` and the `chaos/` scripts) rather than
-  through an API, since account provisioning is out of scope for V1/V2.
+- Accounts used in the chaos suite and smoke test are still seeded directly via SQL rather
+  than through `POST /accounts`, matching those scripts' existing style.
 
 **New in V2:**
 
@@ -410,3 +471,17 @@ ordinary transaction through the existing `POST /transactions` with
   (`gateway-sim.withdrawal-timeout-seconds`, configurable). A real payment rail's settlement
   window would typically be much longer; 60 seconds is appropriate for a demo/chaos-test
   platform where scenarios need to complete quickly, not for a production integration.
+
+**New admin API additions:**
+
+- **No pagination**: `GET /accounts`, `GET /transactions`, and `GET /holds` return every
+  row unconditionally. Acceptable at this platform's current demo scale; a real deployment
+  would need cursor- or offset-based pagination before these could be exposed against a
+  production-sized dataset.
+- **Coarse-grained role model**: authorization is a single flat `admin` realm role with no
+  finer-grained scopes (e.g. read-only auditor vs. an operator who can reverse
+  transactions) and no per-resource ownership checks — any `admin`-role token can read or
+  reverse anything.
+- **No audit log for admin actions**: `POST /transactions/{id}/reverse` is recorded only as
+  an ordinary compensating transaction; there is no separate record of who (which token
+  subject) triggered a reversal or when the read-only admin endpoints were queried.

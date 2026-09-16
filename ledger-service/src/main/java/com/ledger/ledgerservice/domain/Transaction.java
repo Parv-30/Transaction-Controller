@@ -33,6 +33,9 @@ public class Transaction {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "reversal_of_transaction_id")
+    private UUID reversalOfTransactionId;
+
     protected Transaction() {
         // JPA
     }
@@ -54,6 +57,15 @@ public class Transaction {
     public String getDescription() { return description; }
     public String getRequestPayloadHash() { return requestPayloadHash; }
     public Instant getCreatedAt() { return createdAt; }
+    public UUID getReversalOfTransactionId() { return reversalOfTransactionId; }
+
+    public void setReversalOfTransactionId(UUID reversalOfTransactionId) {
+        this.reversalOfTransactionId = reversalOfTransactionId;
+    }
+
+    public void markReversed() {
+        this.status = TransactionStatus.REVERSED;
+    }
 
     @PrePersist
     void onCreate() {

@@ -18,6 +18,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -56,6 +58,9 @@ class HoldServiceIntegrationTest {
         accountBalanceCacheRepository.deleteAll();
         outboxRepository.deleteAll();
         accountBalanceCacheRepository.save(new AccountBalanceCache("acct-holds-a", 10_000L, 0L));
+        accountBalanceCacheRepository.save(new AccountBalanceCache("list-holds-a", 10_000L, 0L));
+        accountBalanceCacheRepository.save(new AccountBalanceCache("filter-holds-source", 10_000L, 0L));
+        accountBalanceCacheRepository.save(new AccountBalanceCache("status-holds-a", 10_000L, 0L));
     }
 
     @Test
@@ -158,5 +163,39 @@ class HoldServiceIntegrationTest {
         assertThat(response.heldBalanceMinor()).isZero();
         assertThat(response.availableBalanceMinor()).isZero();
         assertThat(accountBalanceCacheRepository.findById("acct-never-seen")).isEmpty();
+    }
+
+    @Test
+    void listHoldsWithNoFiltersReturnsAllHolds() {
+        holdService.createHold(new CreateHoldRequest("list-holds-a", "list-holds-b", 100L, "USD", 3600L),
+                "list-holds-key-1");
+
+        List<HoldResponse> results = holdService.listHolds(null, null);
+
+        assertThat(results).extracting(HoldResponse::accountRef).contains("list-holds-a");
+    }
+
+    @Test
+    void listHoldsFiltersByAccountRefOnEitherSide() {
+        holdService.createHold(new CreateHoldRequest("filter-holds-source", "filter-holds-dest", 50L, "USD", 3600L),
+                "filter-holds-key-1");
+
+        List<HoldResponse> sourceResults = holdService.listHolds("filter-holds-source", null);
+        List<HoldResponse> destResults = holdService.listHolds("filter-holds-dest", null);
+
+        assertThat(sourceResults).extracting(HoldResponse::accountRef).contains("filter-holds-source");
+        assertThat(destResults).extracting(HoldResponse::destinationAccountRef).contains("filter-holds-dest");
+    }
+
+    @Test
+    void listHoldsFiltersByStatus() {
+        holdService.createHold(new CreateHoldRequest("status-holds-a", "status-holds-b", 25L, "USD", 3600L),
+                "status-holds-key-1");
+
+        List<HoldResponse> activeResults = holdService.listHolds(null, "ACTIVE");
+        List<HoldResponse> releasedResults = holdService.listHolds(null, "RELEASED");
+
+        assertThat(activeResults).extracting(HoldResponse::accountRef).contains("status-holds-a");
+        assertThat(releasedResults).extracting(HoldResponse::accountRef).doesNotContain("status-holds-a");
     }
 }
