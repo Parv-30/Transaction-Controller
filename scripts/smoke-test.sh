@@ -269,8 +269,45 @@ echo "Gateway Simulator deposit-then-withdrawal round trip verified: deposit cre
 echo "debited and reversed correctly on FAILED confirmation."
 
 echo ""
+echo "Verifying the admin-role boundary on POST /transactions/{id}/reverse..."
+echo "(Keycloak's realm_access.roles claim is mapped to Spring Security authorities by"
+echo "KeycloakRealmRoleConverter; the gateway's SecurityConfig gates this route behind"
+echo "ROLE_admin. A non-admin token must be rejected with 403 before ever reaching the"
+echo "controller, while an admin token must pass the gate and reach ledger-service, which"
+echo "then legitimately 404s on a nonexistent transaction id -- proving the gate itself"
+echo "is the thing being tested, not just downstream 404 behavior.)"
+USER_ROLE_TOKEN=$(bash "$(dirname "${BASH_SOURCE[0]}")/get-token.sh" alice)
+ADMIN_ROLE_TOKEN=$(bash "$(dirname "${BASH_SOURCE[0]}")/get-token.sh" admin)
+FAKE_TXN_ID="00000000-0000-0000-0000-000000000000"
+
+USER_REVERSE_HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  "$GATEWAY_URL/transactions/$FAKE_TXN_ID/reverse" \
+  -H "Authorization: Bearer $USER_ROLE_TOKEN")
+echo "  POST /transactions/{id}/reverse (alice, user role) -> $USER_REVERSE_HTTP_CODE"
+if [ "$USER_REVERSE_HTTP_CODE" != "403" ]; then
+  echo "Smoke test FAILED: expected HTTP 403 for a non-admin token on the reverse endpoint,"
+  echo "got $USER_REVERSE_HTTP_CODE -- the admin role gate may not be wired correctly."
+  exit 1
+fi
+
+ADMIN_REVERSE_HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  "$GATEWAY_URL/transactions/$FAKE_TXN_ID/reverse" \
+  -H "Authorization: Bearer $ADMIN_ROLE_TOKEN")
+echo "  POST /transactions/{id}/reverse (admin, admin role) -> $ADMIN_REVERSE_HTTP_CODE"
+if [ "$ADMIN_REVERSE_HTTP_CODE" = "403" ]; then
+  echo "Smoke test FAILED: expected a non-403 response for an admin-role token (the fake id"
+  echo "should legitimately 404 past the authorization gate), but got 403 -- the admin token"
+  echo "is being rejected by the gate instead of passing it."
+  exit 1
+fi
+
+echo "Admin-role boundary verified: alice (user role) is rejected with 403, admin passes the"
+echo "authorization gate (got $ADMIN_REVERSE_HTTP_CODE, not 403)."
+
+echo ""
 echo "Smoke test complete: reconciliation is clean, the Holds flow (create + capture) works"
 echo "through the gateway, gateway route disambiguation between Ledger Service and Holds"
-echo "Service is correct, and the Gateway Simulator deposit/withdrawal round trip is correct."
+echo "Service is correct, the Gateway Simulator deposit/withdrawal round trip is correct, and"
+echo "the admin-role authorization boundary on POST /transactions/{id}/reverse is enforced."
 echo "Final reconciliation result: $RECON_RESPONSE"
 exit 0
