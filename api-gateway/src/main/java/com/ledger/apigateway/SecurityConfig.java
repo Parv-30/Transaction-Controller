@@ -28,8 +28,12 @@ public class SecurityConfig {
                         // reach holds-service, which enforces self-scoping (a non-admin caller
                         // must supply accountRef and is scoped to it; only an admin caller may
                         // omit it for the full list) -- see the design spec, Section 4.
+                        // GET /transactions is likewise no longer admin-gated here, for the same
+                        // reason: pathMatchers cannot distinguish GET /transactions from
+                        // GET /transactions?accountRef=..., so gating the bare path here would
+                        // also block a non-admin end user's own scoped query. ledger-service now
+                        // enforces the identical self-scoping rule for listTransactions.
                         .pathMatchers(HttpMethod.GET, "/accounts").hasAuthority("ROLE_admin")
-                        .pathMatchers(HttpMethod.GET, "/transactions").hasAuthority("ROLE_admin")
                         .pathMatchers(HttpMethod.POST, "/transactions/*/reverse").hasAuthority("ROLE_admin")
                         .pathMatchers(HttpMethod.GET, "/reconciliation/runs").hasAuthority("ROLE_admin")
                         .anyExchange().authenticated())

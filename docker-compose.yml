@@ -70,6 +70,7 @@ services:
       SERVER_PORT: "8090"
       FX_SERVICE_URL: http://fx-service:8083
       HOLDS_SERVICE_URL: http://holds-service:8082
+      KEYCLOAK_ISSUER_URI: http://host.docker.internal:8180/realms/ledger
     ports:
       - "8090:8090"
     depends_on:

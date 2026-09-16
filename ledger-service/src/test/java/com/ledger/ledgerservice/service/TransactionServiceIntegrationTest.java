@@ -12,6 +12,7 @@ import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.OutboxRepository;
 import com.ledger.ledgerservice.repository.TransactionRepository;
+import com.ledger.ledgerservice.security.CallerContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -343,7 +344,8 @@ class TransactionServiceIntegrationTest {
         transactionService.postTransaction(new CreateTransactionRequest(
                 "acct-a", "acct-b", 100L, "USD", "list test"), "list-test-key-1");
 
-        List<TransactionSummaryResponse> results = transactionService.listTransactions(null, null, null, null);
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<TransactionSummaryResponse> results = transactionService.listTransactions(null, null, null, null, admin);
 
         assertThat(results).extracting(TransactionSummaryResponse::debitAccountRef).contains("acct-a");
     }
@@ -353,10 +355,11 @@ class TransactionServiceIntegrationTest {
         TransactionResponse posted = transactionService.postTransaction(new CreateTransactionRequest(
                 "acct-a", "acct-b", 200L, "USD", "filter test"), "filter-test-key-1");
 
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
         List<TransactionSummaryResponse> debitSideResults =
-                transactionService.listTransactions("acct-a", null, null, null);
+                transactionService.listTransactions("acct-a", null, null, null, admin);
         List<TransactionSummaryResponse> creditSideResults =
-                transactionService.listTransactions("acct-b", null, null, null);
+                transactionService.listTransactions("acct-b", null, null, null, admin);
 
         assertThat(debitSideResults).extracting(TransactionSummaryResponse::transactionId)
                 .contains(posted.transactionId());
@@ -369,8 +372,9 @@ class TransactionServiceIntegrationTest {
         transactionService.postTransaction(new CreateTransactionRequest(
                 "acct-a", "acct-b", 50L, "USD", "status filter test"), "status-filter-key-1");
 
-        List<TransactionSummaryResponse> postedResults = transactionService.listTransactions(null, "POSTED", null, null);
-        List<TransactionSummaryResponse> failedResults = transactionService.listTransactions(null, "FAILED", null, null);
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<TransactionSummaryResponse> postedResults = transactionService.listTransactions(null, "POSTED", null, null, admin);
+        List<TransactionSummaryResponse> failedResults = transactionService.listTransactions(null, "FAILED", null, null, admin);
 
         assertThat(postedResults).isNotEmpty();
         assertThat(failedResults).isEmpty();
@@ -383,10 +387,11 @@ class TransactionServiceIntegrationTest {
         Instant beforePosting = Instant.now().minusSeconds(60);
         Instant afterPosting = Instant.now().plusSeconds(60);
 
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
         List<TransactionSummaryResponse> inRangeResults =
-                transactionService.listTransactions(null, null, beforePosting, afterPosting);
+                transactionService.listTransactions(null, null, beforePosting, afterPosting, admin);
         List<TransactionSummaryResponse> outOfRangeResults =
-                transactionService.listTransactions(null, null, afterPosting, null);
+                transactionService.listTransactions(null, null, afterPosting, null, admin);
 
         assertThat(inRangeResults).extracting(TransactionSummaryResponse::transactionId)
                 .contains(posted.transactionId());
@@ -468,10 +473,45 @@ class TransactionServiceIntegrationTest {
         assertThatThrownBy(() -> transactionService.reverseTransaction(original.transactionId()))
                 .isInstanceOf(TransactionAlreadyReversedException.class);
 
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
         List<TransactionSummaryResponse> allReversalsOfOriginal =
-                transactionService.listTransactions(null, null, null, null).stream()
+                transactionService.listTransactions(null, null, null, null, admin).stream()
                         .filter(t -> original.transactionId().equals(t.reversalOfTransactionId()))
                         .toList();
         assertThat(allReversalsOfOriginal).hasSize(1);
+    }
+
+    @Test
+    void nonAdminCallerWithAccountRefCanListTheirOwnTransactions() {
+        transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 100L, "USD", "self-scope test"), "self-scope-tx-key-1");
+
+        CallerContext nonAdmin = new CallerContext(java.util.Set.of("user"));
+        List<TransactionSummaryResponse> results =
+                transactionService.listTransactions("acct-a", null, null, null, nonAdmin);
+
+        assertThat(results).extracting(TransactionSummaryResponse::debitAccountRef).contains("acct-a");
+    }
+
+    @Test
+    void nonAdminCallerWithBlankAccountRefIsRejected() {
+        CallerContext nonAdmin = new CallerContext(java.util.Set.of("user"));
+
+        assertThatThrownBy(() -> transactionService.listTransactions(null, null, null, null, nonAdmin))
+                .isInstanceOf(AccountRefRequiredForNonAdminException.class);
+        assertThatThrownBy(() -> transactionService.listTransactions("", null, null, null, nonAdmin))
+                .isInstanceOf(AccountRefRequiredForNonAdminException.class);
+    }
+
+    @Test
+    void adminCallerCanListAllTransactionsWithNoAccountRef() {
+        transactionService.postTransaction(new CreateTransactionRequest(
+                "acct-a", "acct-b", 100L, "USD", "admin-scope test"), "admin-scope-tx-key-1");
+
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<TransactionSummaryResponse> results =
+                transactionService.listTransactions(null, null, null, null, admin);
+
+        assertThat(results).extracting(TransactionSummaryResponse::debitAccountRef).contains("acct-a");
     }
 }
