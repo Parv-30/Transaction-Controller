@@ -29,7 +29,7 @@ function rolesFromUser(user: User | null): string[] {
   return realmAccess?.roles ?? [];
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
+export function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const segments = token.split('.');
   if (segments.length < 2) return null;
   try {
