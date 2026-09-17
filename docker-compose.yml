@@ -269,6 +269,22 @@ services:
       keycloak:
         condition: service_healthy
 
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      # Vite inlines VITE_* values into the built JS bundle at build time -- unlike every other
+      # service in this file, this static nginx-served app has no runtime process to read an
+      # `environment:` block from, so these must be passed as build args instead.
+      args:
+        VITE_KEYCLOAK_BASE_URL: http://localhost:8180
+        VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "8085:80"
+    depends_on:
+      api-gateway:
+        condition: service_started
+
   prometheus:
     image: prom/prometheus:v2.55.1
     volumes:
