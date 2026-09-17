@@ -13,6 +13,12 @@ vi.mock('oidc-client-ts', () => ({
     signoutRedirect: mockSignoutRedirect,
     events: { addUserLoaded: vi.fn(), addUserUnloaded: vi.fn(), addAccessTokenExpired: vi.fn() },
   })),
+  // oidcConfig.ts uses these to keep the persisted User (incl. access_token) in
+  // memory only, rather than the library's sessionStorage default. UserManager
+  // itself is fully mocked above and never reads `userStore`, but the module
+  // under test still imports these named exports, so the mock must provide them.
+  InMemoryWebStorage: vi.fn().mockImplementation(() => ({})),
+  WebStorageStateStore: vi.fn().mockImplementation(() => ({})),
 }));
 
 function TestConsumer() {
