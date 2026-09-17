@@ -2,24 +2,24 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { apiFetch, ApiError } from './client';
 
 describe('apiFetch', () => {
-  const originalFetch = global.fetch;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    global.fetch = vi.fn();
+    globalThis.fetch = vi.fn();
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
   });
 
   it('attaches the Authorization header with the current access token', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(
+    vi.mocked(globalThis.fetch).mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
     );
 
     await apiFetch('/accounts', {}, 'token-abc');
 
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/accounts'),
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer token-abc' }),
@@ -28,7 +28,7 @@ describe('apiFetch', () => {
   });
 
   it('parses the backend error body shape and throws ApiError with the message and status', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(
+    vi.mocked(globalThis.fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: 'account not found' }), { status: 404 }),
     );
 
@@ -39,7 +39,7 @@ describe('apiFetch', () => {
   });
 
   it('throws an ApiError with status 401 on an unauthorized response', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(
+    vi.mocked(globalThis.fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 }),
     );
 
@@ -48,7 +48,7 @@ describe('apiFetch', () => {
   });
 
   it('returns the parsed JSON body on success', async () => {
-    vi.mocked(global.fetch).mockResolvedValue(
+    vi.mocked(globalThis.fetch).mockResolvedValue(
       new Response(JSON.stringify({ accountRef: 'alice-usd' }), { status: 200 }),
     );
 
