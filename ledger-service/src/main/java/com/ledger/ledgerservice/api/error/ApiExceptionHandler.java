@@ -3,6 +3,7 @@ package com.ledger.ledgerservice.api.error;
 import com.ledger.ledgerservice.service.AccountNotActiveException;
 import com.ledger.ledgerservice.service.AccountNotFoundException;
 import com.ledger.ledgerservice.service.AccountRefAlreadyExistsException;
+import com.ledger.ledgerservice.service.AccountRefRequiredForNonAdminException;
 import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
 import com.ledger.ledgerservice.service.IdempotencyConflictException;
 import com.ledger.ledgerservice.service.InsufficientFundsException;
@@ -69,5 +70,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(CannotReverseAReversalException.class)
     public ResponseEntity<Map<String, String>> handleCannotReverseAReversal(CannotReverseAReversalException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(AccountRefRequiredForNonAdminException.class)
+    public ResponseEntity<Map<String, String>> handleAccountRefRequired(AccountRefRequiredForNonAdminException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
     }
 }

@@ -9,6 +9,7 @@ import com.ledger.holdsservice.domain.Hold;
 import com.ledger.holdsservice.domain.HoldStatus;
 import com.ledger.holdsservice.repository.AccountBalanceCacheRepository;
 import com.ledger.holdsservice.repository.HoldRepository;
+import com.ledger.holdsservice.security.CallerContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -64,11 +65,16 @@ public class HoldService {
     }
 
     /**
-     * Backs {@code GET /holds?accountRef=&status=}. Both filters are optional; when
-     * {@code accountRef} is supplied it matches either side of the hold (source or destination).
+     * Backs {@code GET /holds?accountRef=&status=}. An {@code admin}-role caller may omit
+     * {@code accountRef} for the full list; a non-admin caller must supply a non-blank
+     * {@code accountRef} and is scoped to holds matching it (see the design spec, Section 4) --
+     * a non-admin caller may never receive the unscoped "all holds" list.
      */
     @Transactional(readOnly = true)
-    public List<HoldResponse> listHolds(String accountRefFilter, String statusFilter) {
+    public List<HoldResponse> listHolds(String accountRefFilter, String statusFilter, CallerContext caller) {
+        if (!caller.isAdmin() && (accountRefFilter == null || accountRefFilter.isBlank())) {
+            throw new AccountRefRequiredForNonAdminException();
+        }
         HoldStatus status = statusFilter != null ? HoldStatus.valueOf(statusFilter) : null;
         List<Hold> holds = holdRepository.search(accountRefFilter, status);
         return holds.stream().map(hold -> holdPoster.toResponse(hold, false)).toList();

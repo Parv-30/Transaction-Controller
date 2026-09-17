@@ -5,6 +5,8 @@ import com.ledger.holdsservice.api.dto.CaptureHoldRequest;
 import com.ledger.holdsservice.api.dto.CreateHoldRequest;
 import com.ledger.holdsservice.api.dto.HeldBalanceResponse;
 import com.ledger.holdsservice.api.dto.HoldResponse;
+import com.ledger.holdsservice.security.CallerContext;
+import com.ledger.holdsservice.security.JwtRoleReader;
 import com.ledger.holdsservice.service.HoldService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,9 +19,11 @@ import java.util.UUID;
 public class HoldController {
 
     private final HoldService holdService;
+    private final JwtRoleReader jwtRoleReader;
 
-    public HoldController(HoldService holdService) {
+    public HoldController(HoldService holdService, JwtRoleReader jwtRoleReader) {
         this.holdService = holdService;
+        this.jwtRoleReader = jwtRoleReader;
     }
 
     @PostMapping("/holds")
@@ -48,8 +52,10 @@ public class HoldController {
     @GetMapping("/holds")
     public ResponseEntity<List<HoldResponse>> list(
             @RequestParam(value = "accountRef", required = false) String accountRef,
-            @RequestParam(value = "status", required = false) String status) {
-        return ResponseEntity.ok(holdService.listHolds(accountRef, status));
+            @RequestParam(value = "status", required = false) String status,
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader) {
+        CallerContext caller = jwtRoleReader.readRoles(authorizationHeader);
+        return ResponseEntity.ok(holdService.listHolds(accountRef, status, caller));
     }
 
     @PostMapping("/holds/{id}/capture")

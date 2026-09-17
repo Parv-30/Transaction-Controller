@@ -55,6 +55,11 @@ Service is permanently out of scope, per an explicit platform-wide scoping decis
   lookups, reconciliation-run history, and manual transaction reversal) gated behind an
   `admin` Keycloak realm role, enforced by a custom `realm_access.roles`-aware JWT authorities
   converter at the API Gateway.
+- **A browser-based frontend**: a React SPA (`web/`, served by nginx in production) providing
+  both an end-user banking UI (`/app/*`) and a role-gated admin console (`/admin/*`), the
+  platform's first client-facing surface beyond `curl`/scripts. Logs in against Keycloak via
+  a new public, PKCE-only OAuth2 client (`ledger-web`) — no shared secret, unlike every other
+  existing Keycloak client in this realm.
 
 ## Architecture
 
@@ -117,6 +122,17 @@ Six Spring Boot microservices, database-per-service, fronted by an API Gateway:
   it. A `realm_access.roles` claim (e.g. `["admin","user"]`) carries realm roles; the demo
   user `admin` (password grant, see "Getting a token") has the `admin` role, while `alice`
   and `bob` do not.
+- **Web** (`:8085`) — a Vite + React + TypeScript SPA, served by nginx in production. The
+  public landing page (`/`) starts the Keycloak Authorization Code + PKCE flow via the new
+  `ledger-web` public client; a caller with the `admin` realm role lands on `/admin`, every
+  other authenticated caller lands on `/app`. Every request goes through the API Gateway,
+  same as every other client. `GET /holds` and `GET /transactions` are no longer unconditionally
+  admin-gated: a non-admin, authenticated caller may list either scoped to a specific
+  `accountRef` they name (never the unscoped full list), enforced inside Holds Service and
+  Ledger Service respectively via a new, minimal JWT-role-decoding path
+  (`JwtRoleReader`/`CallerContext` in each service) — the first time either service has needed
+  to know the caller's identity rather than trusting the gateway's authorization decision
+  alone.
 - **Prometheus** (`:9090`) — scrapes `/actuator/prometheus` from all 6 Spring Boot services
   and stores the resulting metrics.
 - **Grafana** (`:3000`) — dashboards over Prometheus's data; anonymous viewer access is
@@ -214,6 +230,22 @@ curl -X POST http://localhost:8080/holds \
   -H "Idempotency-Key: <client-generated-uuid>" \
   -d '{"accountRef":"smoke-a","destinationAccountRef":"smoke-b","amountMinor":500,"currency":"USD","expiresInSeconds":3600}'
 ```
+
+### Running the web frontend
+
+`make up` now also builds and starts `web` (`http://localhost:8085`), nginx-served in
+production. For local frontend development with hot reload instead:
+
+```bash
+cd web
+npm install
+npm run dev   # http://localhost:5173, proxied against the already-running API Gateway/Keycloak
+```
+
+Log in with any of the demo users (`alice`, `bob`, `admin` — see "Getting a token" above for
+their passwords); the web app drives the same Keycloak Authorization Code + PKCE flow a real
+browser client would use, distinct from the password-grant flow `scripts/get-token.sh` uses
+for scripting/testing.
 
 ## Running tests
 
@@ -481,7 +513,26 @@ new run).
 - **Coarse-grained role model**: authorization is a single flat `admin` realm role with no
   finer-grained scopes (e.g. read-only auditor vs. an operator who can reverse
   transactions) and no per-resource ownership checks — any `admin`-role token can read or
-  reverse anything.
+  reverse anything
+  (`GET /holds` and `GET /transactions` are now the first exception: a non-admin caller may
+  read their own named account's holds/transactions, though "own" here means only "the
+  account ref they supply," since this platform still has no formal link between a Keycloak
+  identity and a ledger `accountRef`).
 - **No audit log for admin actions**: `POST /transactions/{id}/reverse` is recorded only as
   an ordinary compensating transaction; there is no separate record of who (which token
   subject) triggered a reversal or when the read-only admin endpoints were queried.
+
+**New in the web frontend:**
+
+- **No real user-to-account linkage**: every end-user page hardcodes `alice-usd` as "the
+  current user's account" rather than deriving it from the logged-in identity, since this
+  platform has no such mapping today (see the design spec's Section 4). A real multi-account
+  frontend would need this linkage built first.
+- **Vite build-time config, not runtime config**: `VITE_KEYCLOAK_BASE_URL`/`VITE_API_BASE_URL`
+  are baked into the static JS bundle at Docker build time (`web/Dockerfile`'s build args),
+  not read from a runtime environment variable like every other service in this platform —
+  an nginx-served static bundle has no server-side process to read `environment:` from.
+  Changing either value requires a rebuild of the `web` image, not just a container restart.
+- **No E2E test suite**: Vitest + React Testing Library cover the API client, auth/role-routing
+  logic, and the transfer/reversal confirmation flows; no browser-driven end-to-end suite
+  exists yet (Playwright, per the design spec's Non-Goals, is a plausible later addition).

@@ -13,6 +13,7 @@ import com.ledger.ledgerservice.holds.HoldsServiceUnavailableException;
 import com.ledger.ledgerservice.repository.AccountRepository;
 import com.ledger.ledgerservice.repository.EntryRepository;
 import com.ledger.ledgerservice.repository.TransactionRepository;
+import com.ledger.ledgerservice.security.CallerContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -150,7 +151,10 @@ public class TransactionService {
     }
 
     public List<TransactionSummaryResponse> listTransactions(String accountRefFilter, String statusFilter,
-                                                                Instant since, Instant until) {
+                                                                Instant since, Instant until, CallerContext caller) {
+        if (!caller.isAdmin() && (accountRefFilter == null || accountRefFilter.isBlank())) {
+            throw new AccountRefRequiredForNonAdminException();
+        }
         List<Transaction> transactions;
         if (accountRefFilter != null) {
             transactions = transactionRepository.findByAccountRef(accountRefFilter);

@@ -7,6 +7,7 @@ import com.ledger.holdsservice.domain.AccountBalanceCache;
 import com.ledger.holdsservice.repository.AccountBalanceCacheRepository;
 import com.ledger.holdsservice.repository.HoldRepository;
 import com.ledger.holdsservice.repository.OutboxRepository;
+import com.ledger.holdsservice.security.CallerContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -170,7 +171,8 @@ class HoldServiceIntegrationTest {
         holdService.createHold(new CreateHoldRequest("list-holds-a", "list-holds-b", 100L, "USD", 3600L),
                 "list-holds-key-1");
 
-        List<HoldResponse> results = holdService.listHolds(null, null);
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<HoldResponse> results = holdService.listHolds(null, null, admin);
 
         assertThat(results).extracting(HoldResponse::accountRef).contains("list-holds-a");
     }
@@ -180,8 +182,9 @@ class HoldServiceIntegrationTest {
         holdService.createHold(new CreateHoldRequest("filter-holds-source", "filter-holds-dest", 50L, "USD", 3600L),
                 "filter-holds-key-1");
 
-        List<HoldResponse> sourceResults = holdService.listHolds("filter-holds-source", null);
-        List<HoldResponse> destResults = holdService.listHolds("filter-holds-dest", null);
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<HoldResponse> sourceResults = holdService.listHolds("filter-holds-source", null, admin);
+        List<HoldResponse> destResults = holdService.listHolds("filter-holds-dest", null, admin);
 
         assertThat(sourceResults).extracting(HoldResponse::accountRef).contains("filter-holds-source");
         assertThat(destResults).extracting(HoldResponse::destinationAccountRef).contains("filter-holds-dest");
@@ -192,10 +195,49 @@ class HoldServiceIntegrationTest {
         holdService.createHold(new CreateHoldRequest("status-holds-a", "status-holds-b", 25L, "USD", 3600L),
                 "status-holds-key-1");
 
-        List<HoldResponse> activeResults = holdService.listHolds(null, "ACTIVE");
-        List<HoldResponse> releasedResults = holdService.listHolds(null, "RELEASED");
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<HoldResponse> activeResults = holdService.listHolds(null, "ACTIVE", admin);
+        List<HoldResponse> releasedResults = holdService.listHolds(null, "RELEASED", admin);
 
         assertThat(activeResults).extracting(HoldResponse::accountRef).contains("status-holds-a");
         assertThat(releasedResults).extracting(HoldResponse::accountRef).doesNotContain("status-holds-a");
+    }
+
+    @Test
+    void nonAdminCallerWithAccountRefCanListTheirOwnHolds() {
+        holdService.createHold(new CreateHoldRequest("list-holds-a", "acct-merchant", 100L, "USD", 3600),
+                "self-scope-key-1");
+
+        CallerContext nonAdmin = new CallerContext(java.util.Set.of("user"));
+        List<HoldResponse> results = holdService.listHolds("list-holds-a", null, nonAdmin);
+
+        assertThat(results).extracting(HoldResponse::accountRef).contains("list-holds-a");
+    }
+
+    @Test
+    void nonAdminCallerWithBlankAccountRefIsRejected() {
+        CallerContext nonAdmin = new CallerContext(java.util.Set.of("user"));
+
+        assertThatThrownBy(() -> holdService.listHolds(null, null, nonAdmin))
+                .isInstanceOf(AccountRefRequiredForNonAdminException.class);
+        assertThatThrownBy(() -> holdService.listHolds("", null, nonAdmin))
+                .isInstanceOf(AccountRefRequiredForNonAdminException.class);
+    }
+
+    @Test
+    void adminCallerCanListAllHoldsWithNoAccountRef() {
+        holdService.createHold(new CreateHoldRequest("list-holds-a", "acct-merchant", 100L, "USD", 3600),
+                "admin-scope-key-1");
+
+        CallerContext admin = new CallerContext(java.util.Set.of("user", "admin"));
+        List<HoldResponse> results = holdService.listHolds(null, null, admin);
+
+        assertThat(results).extracting(HoldResponse::accountRef).contains("list-holds-a");
+    }
+
+    @Test
+    void callerWithNoRolesAtAllIsTreatedAsNonAdmin() {
+        assertThatThrownBy(() -> holdService.listHolds(null, null, CallerContext.NONE))
+                .isInstanceOf(AccountRefRequiredForNonAdminException.class);
     }
 }

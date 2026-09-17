@@ -14,6 +14,11 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8180/realms/ledger}
 
 processor:
   base-url: ${PROCESSOR_BASE_URL:http://localhost:8081}
