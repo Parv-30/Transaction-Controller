@@ -277,7 +277,15 @@ services:
       # service in this file, this static nginx-served app has no runtime process to read an
       # `environment:` block from, so these must be passed as build args instead.
       args:
-        VITE_KEYCLOAK_BASE_URL: http://localhost:8180
+        # Must match Keycloak's KC_HOSTNAME exactly (http://host.docker.internal:8180), not just be
+        # browser-reachable. Keycloak renders every server-side page -- including the login form's
+        # own `action` URL -- using KC_HOSTNAME regardless of which hostname the browser used for the
+        # initial request. If this pointed at a different (even if equally reachable) hostname such as
+        # localhost:8180, the browser would fetch the login page from one origin but POST the login
+        # form to another, and the session cookie set on the first origin would never reach the second
+        # -- Keycloak then rejects the login with "Cookie not found" (confirmed by reproduction). Using
+        # the same host.docker.internal hostname here keeps every step of the OIDC flow on one origin.
+        VITE_KEYCLOAK_BASE_URL: http://host.docker.internal:8180
         VITE_API_BASE_URL: http://localhost:8080
     ports:
       - "8085:80"
